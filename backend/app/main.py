@@ -31,11 +31,20 @@ def get_price(symbol: str):
     """Get the current price ticker for a popular coin like BTCUSDT or ETHUSDT."""
     return crypto_fetcher.get_binance_ticker(symbol.upper())
 
+from app.services.sentiment_service import sentiment_service
+
 @app.get("/api/high-potential")
 def get_high_potential():
-    """Get trending novel tokens from CoinGecko as a baseline for high potential."""
-    trending = crypto_fetcher.get_coingecko_trending()
-    return {"trending": trending}
+    """
+    Get trending novel tokens from CoinGecko and process them through our
+    NLP sentiment and on-chain volume logic to rank them by Spike Probability.
+    """
+    trending_raw = crypto_fetcher.get_coingecko_trending()
+    if not isinstance(trending_raw, list) or len(trending_raw) == 0:
+        return {"error": "Could not parse trending data"}
+        
+    scored_coins = sentiment_service.calculate_spike_probability(trending_raw)
+    return {"high_potential_recommendations": scored_coins}
 
 from app.services.prediction_service import predictor_service
 
