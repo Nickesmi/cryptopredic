@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
-import { Activity, BarChart2, Compass, Layers, Settings, Shield } from 'lucide-react';
+import { Activity, BarChart2, Compass, Layers, Settings, Shield, Search } from 'lucide-react';
+import Link from 'next/link';
 
 export const metadata: Metadata = {
   title: 'Crypto Alpha Engine | Quant Terminal',
@@ -21,10 +22,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </h1>
             </div>
             <nav className="p-4 space-y-2">
-              <SidebarItem icon={<Compass />} label="Dashboard" active />
-              <SidebarItem icon={<BarChart2 />} label="Coin Analysis" />
-              <SidebarItem icon={<Layers />} label="Forecast Lab" />
-              <SidebarItem icon={<Shield />} label="Risk Engine" />
+              <SidebarItem icon={<Compass />} label="Dashboard" href="/" />
+              <SidebarItem icon={<BarChart2 />} label="Screener" href="/screener" />
+              <SidebarItem icon={<Layers />} label="Coin Analysis" href="/coin/BTC" />
+              <SidebarItem icon={<Shield />} label="Forecast Lab" href="#" />
             </nav>
           </div>
           <div className="p-4 border-t border-[#ffffff0f]">
@@ -35,8 +36,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {/* Global Dashboard Shell */}
         <div className="flex-1 flex flex-col relative z-0">
           <header className="h-16 border-b border-[#ffffff0f] bg-core/80 backdrop-blur-md flex items-center justify-between px-6">
-             <div className="text-sm font-semibold tracking-wide text-secondary uppercase">
-                Global Terminal Feed active
+             <div className="relative w-64 md:w-96">
+                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+                <input 
+                  type="text" 
+                  placeholder="Universal crypto search... (Ctrl+K)" 
+                  className="w-full bg-[#ffffff05] border border-[#ffffff10] rounded-lg py-1.5 pl-9 pr-3 text-sm text-primary focus:outline-none focus:border-premium/50 transition-colors"
+                />
              </div>
              <div className="flex items-center gap-4">
                 <div className="flex items-center gap-2 px-3 py-1 bg-bullish/10 border border-bullish/20 rounded-full">
@@ -57,12 +63,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   );
 }
 
-function SidebarItem({ icon, label, active = false }: { icon: React.ReactNode, label: string, active?: boolean }) {
+function SidebarItem({ icon, label, href = "#" }: { icon: React.ReactNode, label: string, href?: string }) {
   return (
-    <div className={`flex items-center gap-3 px-4 py-3 rounded-lg cursor-pointer transition-all duration-200 ${active ? 'bg-premium/10 text-premium font-medium border border-premium/20' : 'text-secondary hover:bg-card hover:text-primary border border-transparent'}`}>
+    <Link href={href} className="flex items-center gap-3 px-4 py-3 rounded-lg cursor-pointer transition-all duration-200 text-secondary hover:bg-card hover:text-primary border border-transparent">
       {icon}
       <span>{label}</span>
-      {active && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-premium"></div>}
-    </div>
+    </Link>
   );
 }
