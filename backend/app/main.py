@@ -36,3 +36,13 @@ def get_high_potential():
     """Get trending novel tokens from CoinGecko as a baseline for high potential."""
     trending = crypto_fetcher.get_coingecko_trending()
     return {"trending": trending}
+
+from app.services.prediction_service import predictor_service
+
+@app.get("/api/predict/{symbol}")
+def predict_crypto_price(symbol: str, days: int = 30):
+    """
+    Generate a price prediction forecast for the given symbol (e.g. BTCUSDT) 
+    over a specified number of days (e.g. 1, 7, 30).
+    """
+    return predictor_service.predict_price(symbol.upper(), days_to_predict=days)
