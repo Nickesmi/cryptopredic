@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 import { Activity, BarChart2, Compass, Layers, Settings, Shield, Search } from 'lucide-react';
 import Link from 'next/link';
+import { CommandPalette } from '../components/CommandPalette';
 
 export const metadata: Metadata = {
   title: 'Crypto Alpha Engine | Quant Terminal',
@@ -36,14 +37,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {/* Global Dashboard Shell */}
         <div className="flex-1 flex flex-col relative z-0">
           <header className="h-16 border-b border-[#ffffff0f] bg-core/80 backdrop-blur-md flex items-center justify-between px-6">
-             <div className="relative w-64 md:w-96">
-                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
-                <input 
-                  type="text" 
-                  placeholder="Universal crypto search... (Ctrl+K)" 
-                  className="w-full bg-[#ffffff05] border border-[#ffffff10] rounded-lg py-1.5 pl-9 pr-3 text-sm text-primary focus:outline-none focus:border-premium/50 transition-colors"
-                />
-             </div>
+             <CommandPalette />
              <div className="flex items-center gap-4">
                 <div className="flex items-center gap-2 px-3 py-1 bg-bullish/10 border border-bullish/20 rounded-full">
                   <div className="w-2 h-2 rounded-full bg-bullish animate-pulse"></div>

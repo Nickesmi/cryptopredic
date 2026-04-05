@@ -2,8 +2,9 @@ import Link from 'next/link';
 import { ArrowLeft, Target, Shield, TrendingUp, Activity, BarChart2, CheckCircle2, AlertTriangle, Zap } from 'lucide-react';
 import { RechartsChart } from '../../../components/RechartsChart';
 
-export default function CoinAnalysisPage({ params }: { params: { symbol: string }}) {
-  const symbol = params.symbol || 'ACT';
+export default async function CoinAnalysisPage({ params }: { params: Promise<{ symbol: string }> }) {
+  const resolvedParams = await params;
+  const symbol = resolvedParams.symbol || 'ACT';
   
   return (
     <div className="space-y-6 pb-12 animate-in fade-in zoom-in duration-500">
