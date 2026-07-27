@@ -80,3 +80,86 @@ TimeSeriesForecaster.predict_latest(X)
      ▼
 ForecastResult(symbol, horizon, predicted_price, mae, rmse, mape)
 ```
+
+---
+
+## Full System Pipeline (Separation of Concerns)
+
+Each stage has a **single responsibility** and communicates only with its
+immediate neighbours through defined interfaces. No stage skips a layer.
+
+```
+┌─────────────────────────────────────────────────┐
+│  STAGE 1 — Market Data                          │
+│  src/data/fetch_prices.py                       │
+│  PriceRepository → CoinGeckoPriceRepository     │
+│  Outputs: raw OHLCV DataFrame (UTC daily)       │
+└────────────────────┬────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────┐
+│  STAGE 2 — Feature Engineering                  │
+│  src/data/preprocessing.py                      │
+│  src/features/technical_indicators.py           │
+│  src/features/sentiment_features.py  (future)   │
+│  src/features/onchain_features.py    (future)   │
+│  FeaturePipeline → feature matrix               │
+└────────────────────┬────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────┐
+│  STAGE 3 — Forecast Models                      │
+│  src/models/xgboost_model.py                    │
+│  src/models/lstm_model.py           (future)    │
+│  src/models/transformer_model.py    (future)    │
+│  ForecastModel interface → predicted_price      │
+└────────────────────┬────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────┐
+│  STAGE 4 — Confidence Estimator                 │
+│  src/evaluation/metrics.py                      │
+│  src/evaluation/walk_forward.py                 │
+│  Outputs: MAE, RMSE, MAPE, confidence intervals │
+└────────────────────┬────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────┐
+│  STAGE 5 — Risk Manager                         │
+│  src/ranking/risk_score.py                      │
+│  src/ranking/liquidity_filter.py                │
+│  src/ranking/score_coins.py                     │
+│  Outputs: Buy Candidate / Speculative Trap label │
+└────────────────────┬────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────┐
+│  STAGE 6 — LLM Reasoning Agent  (future)        │
+│  src/agents/                                    │
+│  Synthesises forecast + risk into plain-English  │
+│  recommendations with cited evidence             │
+└────────────────────┬────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────┐
+│  STAGE 7 — Frontend Visualisation               │
+│  src/dashboard/streamlit_app.py                 │
+│  frontend/  (Next.js — Issue #4)                │
+│  Renders results; contains zero business logic  │
+└─────────────────────────────────────────────────┘
+```
+
+**Key invariants:**
+- A Forecast Model never makes a buy/sell decision (that is Stage 5's job).
+- A Risk Manager never fetches raw market data (that is Stage 1's job).
+- The Frontend never transforms data (that is Stages 1–5's job).
+
+---
+
+## Governance Documents
+
+| Document | Purpose |
+|----------|---------|
+| [ARCHITECTURE_RULES.md](../ARCHITECTURE_RULES.md) | Non-negotiable structural rules for all contributors |
+| [CLAUDE_RULES.md](../CLAUDE_RULES.md) | AI coding constitution — rules for every AI-generated change |
+| [docs/definition_of_done.md](definition_of_done.md) | Checklist that must pass before closing any issue |

@@ -37,7 +37,7 @@ COINGECKO_BASE_URL: str = os.getenv(
 )
 
 # Number of days of history to fetch when training models
-HISTORY_DAYS: int = int(os.getenv("HISTORY_DAYS", "730"))
+HISTORY_DAYS: int = int(os.getenv("HISTORY_DAYS", "365"))
 
 # ---------------------------------------------------------------------------
 # Supported assets  (use CoinGecko coin IDs)

@@ -1,8 +1,24 @@
 """Price data access layer — Repository pattern.
 
 Defines the abstract ``PriceRepository`` interface and the concrete
-``CoinGeckoPriceRepository`` implementation that fetches daily OHLCV
-data from the CoinGecko public REST API (no API key required).
+``CoinGeckoPriceRepository`` implementation that fetches daily close
+price + volume data from the CoinGecko public REST API (no API key
+required).
+
+Implementation note
+-------------------
+The CoinGecko **free** tier OHLC endpoint (``/coins/{id}/ohlc``) only
+accepts a fixed set of ``days`` values (1, 7, 14, 30, 90, 180, 365).
+Arbitrary ranges (e.g. 730) return a 400 Bad Request.
+
+We therefore use the more flexible ``/coins/{id}/market_chart`` endpoint
+which:
+  * accepts any ``days`` value ≥ 1,
+  * returns daily granularity automatically when ``days > 90``,
+  * provides ``prices`` (close) and ``total_volumes`` in a single call.
+
+We set ``open = high = low = close`` as a simplification; all our
+feature-engineering uses the closing price only.
 """
 
 from __future__ import annotations
@@ -40,7 +56,7 @@ class PriceRepository(ABC):
             days:   Number of trailing calendar days of history to retrieve.
 
         Returns:
-            DataFrame indexed by date with columns:
+            DataFrame indexed by UTC date with columns:
             ``[open, high, low, close, volume]``.
         """
         raise NotImplementedError
@@ -52,18 +68,17 @@ class PriceRepository(ABC):
 
 
 class CoinGeckoPriceRepository(PriceRepository):
-    """Fetches daily OHLCV data from the CoinGecko v3 public API.
+    """Fetches daily price + volume data from the CoinGecko v3 public API.
 
-    CoinGecko's free tier returns daily granularity for ranges > 90 days
-    which is exactly what we need for model training.
+    Uses the ``/coins/{id}/market_chart`` endpoint which supports any
+    ``days`` value and returns daily granularity for ranges > 90 days.
 
     Args:
-        base_url: Override the API base URL (useful for testing).
-        timeout:  HTTP request timeout in seconds.
+        base_url:    Override the API base URL (useful for testing).
+        timeout:     HTTP request timeout in seconds.
         max_retries: Number of retry attempts on transient HTTP errors.
     """
 
-    _OHLC_ENDPOINT = "/coins/{coin_id}/ohlc"
     _MARKET_CHART_ENDPOINT = "/coins/{coin_id}/market_chart"
 
     def __init__(
@@ -83,26 +98,54 @@ class CoinGeckoPriceRepository(PriceRepository):
     # ------------------------------------------------------------------
 
     def fetch(self, symbol: str, days: int) -> pd.DataFrame:
-        """Fetch *days* of daily OHLCV history for *symbol*.
+        """Fetch *days* of daily price history for *symbol*.
 
-        Uses CoinGecko's OHLC endpoint which returns daily candles when
-        *days* ≥ 2.  Falls back gracefully to close-only data if needed.
+        Makes a single call to ``/market_chart`` and extracts daily
+        close prices and volumes.  ``open``, ``high``, and ``low`` are
+        set equal to ``close`` (our feature pipeline uses close only).
 
         Args:
             symbol: CoinGecko coin ID (e.g. ``"bitcoin"``).
-            days:   Number of trailing calendar days.
+            days:   Number of trailing calendar days (any positive int).
 
         Returns:
-            DataFrame with DatetimeIndex and columns
+            DataFrame with UTC DatetimeIndex and columns
             ``[open, high, low, close, volume]``.
         """
-        logger.info("Fetching %d days of OHLCV data for '%s'", days, symbol)
-        ohlc_df = self._fetch_ohlc(symbol, days)
-        volume_df = self._fetch_volume(symbol, days)
+        logger.info("Fetching %d days of price data for '%s'", days, symbol)
 
-        # Merge volume into the OHLC frame on date
-        df = ohlc_df.join(volume_df[["volume"]], how="left")
-        df["volume"] = df["volume"].fillna(0.0)
+        url = self._base_url + self._MARKET_CHART_ENDPOINT.format(
+            coin_id=symbol
+        )
+        params = {"vs_currency": "usd", "days": str(days), "interval": "daily"}
+        raw = self._get_with_retry(url, params)
+
+        prices = raw.get("prices", [])
+        volumes = raw.get("total_volumes", [])
+
+        if not prices:
+            raise ValueError(
+                f"No price data returned by CoinGecko for '{symbol}'."
+            )
+
+        # Build close-price series
+        close_df = self._to_series(prices, "close")
+
+        # Build volume series (align to close index)
+        if volumes:
+            vol_df = self._to_series(volumes, "volume")
+            df = close_df.to_frame().join(vol_df.to_frame(), how="left")
+            df["volume"] = df["volume"].fillna(0.0)
+        else:
+            df = close_df.to_frame()
+            df["volume"] = 0.0
+
+        # Derive open/high/low from close (close-only dataset)
+        df["open"] = df["close"]
+        df["high"] = df["close"]
+        df["low"] = df["close"]
+
+        df = df[["open", "high", "low", "close", "volume"]]
 
         logger.info(
             "Fetched %d rows for '%s' (range: %s → %s)",
@@ -117,51 +160,34 @@ class CoinGeckoPriceRepository(PriceRepository):
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _fetch_ohlc(self, coin_id: str, days: int) -> pd.DataFrame:
-        """Return a DataFrame with open/high/low/close columns."""
-        url = self._base_url + self._OHLC_ENDPOINT.format(coin_id=coin_id)
-        params = {"vs_currency": "usd", "days": str(days)}
-        raw = self._get_with_retry(url, params)
-
-        # CoinGecko returns [[timestamp_ms, open, high, low, close], ...]
-        df = pd.DataFrame(raw, columns=["timestamp_ms", "open", "high", "low", "close"])
+    @staticmethod
+    def _to_series(raw_list: list, name: str) -> pd.Series:
+        """Convert a CoinGecko ``[[timestamp_ms, value], ...]`` list to a Series."""
+        df = pd.DataFrame(raw_list, columns=["timestamp_ms", name])
         df["date"] = (
-            pd.to_datetime(df["timestamp_ms"], unit="ms", utc=True).dt.normalize()
-        )
-        df = df.set_index("date").drop(columns=["timestamp_ms"])
-        # Keep last candle per day (CoinGecko may return multiple intra-day rows)
-        df = df[~df.index.duplicated(keep="last")].sort_index()
-        return df
-
-    def _fetch_volume(self, coin_id: str, days: int) -> pd.DataFrame:
-        """Return a DataFrame with a daily volume column."""
-        url = self._base_url + self._MARKET_CHART_ENDPOINT.format(coin_id=coin_id)
-        params = {"vs_currency": "usd", "days": str(days), "interval": "daily"}
-        raw = self._get_with_retry(url, params)
-
-        # raw["total_volumes"] = [[timestamp_ms, volume], ...]
-        volumes = raw.get("total_volumes", [])
-        if not volumes:
-            return pd.DataFrame(columns=["date", "volume"]).set_index("date")
-
-        df = pd.DataFrame(volumes, columns=["timestamp_ms", "volume"])
-        df["date"] = (
-            pd.to_datetime(df["timestamp_ms"], unit="ms", utc=True).dt.normalize()
+            pd.to_datetime(df["timestamp_ms"], unit="ms", utc=True)
+            .dt.normalize()
         )
         df = df.set_index("date").drop(columns=["timestamp_ms"])
         df = df[~df.index.duplicated(keep="last")].sort_index()
-        return df
+        return df[name]
 
     def _get_with_retry(self, url: str, params: dict) -> dict | list:
         """HTTP GET with exponential back-off retries."""
         last_error: Exception | None = None
         for attempt in range(1, self._max_retries + 1):
             try:
-                response = self._session.get(url, params=params, timeout=self._timeout)
+                response = self._session.get(
+                    url, params=params, timeout=self._timeout
+                )
                 response.raise_for_status()
                 return response.json()
             except requests.HTTPError as exc:
-                status = exc.response.status_code if exc.response is not None else None
+                status = (
+                    exc.response.status_code
+                    if exc.response is not None
+                    else None
+                )
                 if status == 429:
                     wait = 2 ** attempt
                     logger.warning(

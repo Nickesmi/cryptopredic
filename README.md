@@ -23,3 +23,25 @@ This is a research-grade platform. Instead of serving as a "magic coin picker", 
 1. Configure Environment: `python -m venv venv && source venv/bin/activate`
 2. Install Engine Package: `pip install -e .` & `pip install -r requirements.txt`
 3. Launch Streamlit MVP: `streamlit run src/dashboard/streamlit_app.py`
+
+## Development Governance
+
+All contributors (human and AI) must read these documents before writing code:
+
+| Document | Description |
+|----------|-------------|
+| [ARCHITECTURE_RULES.md](ARCHITECTURE_RULES.md) | Clean Architecture rules, adapter patterns, DI, SOLID enforcement |
+| [CLAUDE_RULES.md](CLAUDE_RULES.md) | AI coding constitution — 13 rules for consistent, production-ready generation |
+| [docs/definition_of_done.md](docs/definition_of_done.md) | Checklist every issue must satisfy before being closed |
+| [docs/architecture.md](docs/architecture.md) | Layer diagram, module responsibilities, full 7-stage pipeline |
+| [docs/modeling.md](docs/modeling.md) | Forecasting strategy, feature table, XGBoost Direct Strategy |
+
+## Running Tests & Lint
+
+```bash
+# All unit tests (no network required)
+python -m pytest tests/ -q
+
+# Lint
+flake8 src/ tests/ --max-line-length=88 --extend-ignore=E203,W503
+```
