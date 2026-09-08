@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.env
+data/raw/
+data/*.sqlite3
+models/saved/
+node_modules/
+.next/
