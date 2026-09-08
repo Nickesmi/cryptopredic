@@ -40,6 +40,30 @@ async def get_performance_dashboard():
     data = store.dashboard()
     return data
 
+@router.get("/performance/calibration")
+async def get_calibration(success_field: str = "direction_correct"):
+    """Bucketed confidence-calibration report (predicted confidence vs. actual success rate).
+
+    Returns ``{"calibration": None, "message": ...}`` when there are no
+    evaluated predictions yet -- never a fabricated "well calibrated"
+    result computed from zero data.
+    """
+    report = store.calibration_report(success_field=success_field)
+    if report is None:
+        return {
+            "calibration": None,
+            "message": "No evaluated predictions yet -- calibration cannot be computed.",
+        }
+    return {"calibration": report}
+
+@router.get("/performance/drift")
+async def get_drift_report():
+    """Prediction/error/confidence distribution drift (older vs. newer evaluated half)."""
+    report = store.drift_report()
+    if report is None:
+        return {"drift": None, "message": "Not enough evaluated history yet to assess drift."}
+    return {"drift": report}
+
 @router.get("/models/{model_id}/drift")
 async def check_model_drift(model_id: str, threshold: float = 0.50):
     """Check if a model has drifted below accuracy threshold"""

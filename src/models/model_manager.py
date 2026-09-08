@@ -57,6 +57,8 @@ Do not reintroduce a timeframe -> horizon lookup table.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -64,11 +66,21 @@ from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 
+from src.config.settings import (
+    XGB_COLSAMPLE_BYTREE,
+    XGB_LEARNING_RATE,
+    XGB_MAX_DEPTH,
+    XGB_N_ESTIMATORS,
+    XGB_RANDOM_STATE,
+    XGB_SUBSAMPLE,
+)
 from src.data.exchange.factory import ExchangeFactory
 from src.data.preprocessing import add_log_returns, clean_ohlcv
+from src.data.quality import enforce_quality_gate
 from src.features.feature_pipeline import FeaturePipeline
 from src.models.xgboost_model import ForecastResult, TimeSeriesForecaster
 from src.utils.candles import bars_to_frame
+from src.utils.regime import classify_regime
 from src.utils.timeframes import timeframe_to_seconds
 
 logger = logging.getLogger(__name__)
@@ -150,6 +162,7 @@ class ForecastObject:
     path_is_interpolated: bool = True
     prediction_id: str | None = None
     model_version: str = "1.0.0"
+    feature_version: str = ""
     historical_candles: list[dict] = field(default_factory=list)
     technical_indicators: dict = field(default_factory=dict)
     feature_importance: dict[str, float] = field(default_factory=dict)
@@ -179,6 +192,7 @@ class ForecastObject:
             "n_candles": self.n_candles,
             "prediction_id": self.prediction_id,
             "model_version": self.model_version,
+            "feature_version": self.feature_version,
             "anchor_time": self.anchor_time,
             "anchor_price": self.anchor_price,
             "target_timestamp": self.target_timestamp,
@@ -237,6 +251,11 @@ class ModelManager:
         # *different* chart timeframes that happened to map to the same
         # bucketed horizon-in-days silently shared one cached model.)
         self._forecasters: dict[tuple[str, str, int], TimeSeriesForecaster] = {}
+        # Provenance fingerprint for each cached forecaster -- see
+        # _compute_model_version(). Kept alongside rather than bolted onto
+        # TimeSeriesForecaster so the model class itself stays unaware of
+        # ModelManager-level bookkeeping.
+        self._model_versions: dict[tuple[str, str, int], str] = {}
         self._pipeline = FeaturePipeline()
 
     @property
@@ -291,7 +310,21 @@ class ModelManager:
         bars = await adapter.get_candles(
             symbol, timeframe, limit=1000
         )
+        # bars_to_frame() drops a still-forming trailing candle by default —
+        # see its docstring. The anchor must always be the most recent
+        # *closed* candle (timing-audit Phase 5): predicting from a close
+        # price that is still changing tick-by-tick, or — for higher
+        # timeframes — from an unclosed candle, is exactly the hazard that
+        # section warns about.
         raw_df = bars_to_frame(bars)
+
+        # A bad data point must never silently become a prediction: reject
+        # duplicate/out-of-order/impossible-OHLC/stale data before it ever
+        # reaches feature engineering. Only applied to the live path — the
+        # backtester feeds already-known-good historical frames and must
+        # stay deterministic with respect to wall-clock time, so it calls
+        # predict_from_frame() directly rather than through here.
+        enforce_quality_gate(raw_df, timeframe)
 
         return self.predict_from_frame(
             symbol=symbol,
@@ -366,8 +399,18 @@ class ModelManager:
                 eval_fraction=0.1,
             )
             self._forecasters[cache_key] = forecaster
+            self._model_versions[cache_key] = _compute_model_version(
+                feature_version=self._pipeline.feature_version,
+                symbol=symbol,
+                timeframe=timeframe,
+                horizon_steps=horizon_steps,
+                n_train_rows=len(X_train),
+                train_start=feature_df.index[0],
+                train_end=feature_df.index[len(X_train) - 1] if len(X_train) else feature_df.index[0],
+            )
         else:
             forecaster = self._forecasters[cache_key]
+        model_version = self._model_versions[cache_key]
 
         # Current price (last close)
         current_price = float(feature_df["close"].iloc[-1])
@@ -420,7 +463,7 @@ class ModelManager:
         support_levels = _support_levels(feature_df["low"].tail(60).tolist())
         resistance_levels = _resistance_levels(feature_df["high"].tail(60).tolist())
         risk_level = _risk_level(vol)
-        market_regime = _market_regime(feature_df)
+        market_regime = classify_regime(feature_df["close"])
         recent_candles = [
             {
                 "time": int(idx.timestamp()),
@@ -462,7 +505,8 @@ class ModelManager:
             target_timestamp=target_timestamp,
             horizon_seconds=horizon_steps * interval_seconds,
             path_is_interpolated=n_candles > 1,
-            model_version="1.0.0",
+            model_version=model_version,
+            feature_version=self._pipeline.feature_version,
             historical_candles=recent_candles,
             technical_indicators=latest_indicators,
             feature_importance=forecaster.feature_importances,
@@ -481,6 +525,47 @@ class ModelManager:
 # ─────────────────────────────────────────────────────────────────────────────
 # Private helpers
 # ─────────────────────────────────────────────────────────────────────────────
+
+
+def _compute_model_version(
+    feature_version: str,
+    symbol: str,
+    timeframe: str,
+    horizon_steps: int,
+    n_train_rows: int,
+    train_start,
+    train_end,
+) -> str:
+    """Deterministic provenance fingerprint for one trained forecaster instance.
+
+    Two forecasters get the same ``model_version`` if and only if they were
+    trained on the same feature-pipeline shape, the same (symbol,
+    timeframe, horizon), the same number of rows, and the same training
+    window -- i.e. they are, for all practical purposes, the same model.
+    This is what "model versions are recorded" (Phase 17 / Phase-2
+    production-safety checklist) actually requires: something that changes
+    when the model changes and stays fixed when it doesn't, not a
+    hand-maintained semantic-version string that never moves.
+    """
+    payload = {
+        "feature_version": feature_version,
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "horizon_steps": horizon_steps,
+        "n_train_rows": n_train_rows,
+        "train_start": str(train_start),
+        "train_end": str(train_end),
+        "hyperparams": {
+            "n_estimators": XGB_N_ESTIMATORS,
+            "max_depth": XGB_MAX_DEPTH,
+            "learning_rate": XGB_LEARNING_RATE,
+            "subsample": XGB_SUBSAMPLE,
+            "colsample_bytree": XGB_COLSAMPLE_BYTREE,
+            "random_state": XGB_RANDOM_STATE,
+        },
+    }
+    digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+    return digest[:12]
 
 
 def _interpolate_prices(
@@ -515,13 +600,3 @@ def _risk_level(volatility: float) -> str:
     return "low"
 
 
-def _market_regime(feature_df: pd.DataFrame) -> str:
-    recent = feature_df["close"].tail(30)
-    if len(recent) < 2:
-        return "sideways"
-    change = (float(recent.iloc[-1]) - float(recent.iloc[0])) / float(recent.iloc[0])
-    if change >= 0.05:
-        return "bull"
-    if change <= -0.05:
-        return "bear"
-    return "sideways"

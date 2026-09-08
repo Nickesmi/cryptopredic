@@ -82,6 +82,7 @@ def walk_forward_validate(
     n_folds: int = 5,
     min_train_size: int = 200,
     lookback: int | None = None,
+    stride: int = 1,
 ) -> WalkForwardReport:
     """Run expanding-window walk-forward validation over *df*.
 
@@ -100,6 +101,16 @@ def walk_forward_validate(
         lookback:        Candles of trailing history fed into the feature
                          pipeline for each test-block prediction. Defaults
                          to the fold's full training block.
+        stride:          Evaluate every ``stride``-th candle in each fold's
+                         test block instead of every single one. Default 1
+                         (every candle, matching prior behaviour) preserves
+                         exact backward compatibility; pass e.g. 6-24 for
+                         large multi-horizon studies where evaluating every
+                         candle is computationally prohibitive without
+                         meaningfully changing the aggregate metrics (the
+                         test block is still walked forward chronologically
+                         with no leakage -- this only thins how densely it's
+                         sampled).
 
     Returns:
         A :class:`WalkForwardReport` with per-fold and pooled metrics.
@@ -154,7 +165,7 @@ def walk_forward_validate(
 
         fold_evaluations: list[dict[str, Any]] = []
 
-        for i in range(test_start, test_end):
+        for i in range(test_start, test_end, stride):
             context = df.iloc[window_start:i].copy()
             try:
                 forecast = manager.predict_from_frame(

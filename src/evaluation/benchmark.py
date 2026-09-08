@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+import numpy as np
 import pandas as pd
 
 from src.evaluation.metrics import aggregate_metrics, evaluate_prediction
@@ -88,6 +89,45 @@ def naive_drift(
     return aggregate_metrics(evaluations)
 
 
+def moving_average(
+    df: pd.DataFrame, horizon_candles: int, lookback: int = 20
+) -> dict[str, Any]:
+    """Predicted price = simple moving average of the trailing window.
+
+    A classic "reversion to the recent mean" baseline — distinct from
+    persistence (predicts the *last* price) and drift (extrapolates the
+    *trend*): this one bets the price mean-reverts toward its recent
+    average rather than continuing wherever it just was.
+    """
+    evaluations = _replay_baseline(
+        df, horizon_candles, lookback, predict_fn=lambda history: float(history.mean())
+    )
+    return aggregate_metrics(evaluations)
+
+
+def random_direction(
+    df: pd.DataFrame,
+    horizon_candles: int,
+    lookback: int = 5,
+    magnitude: float = 0.01,
+    seed: int = 42,
+) -> dict[str, Any]:
+    """Coin-flip direction, fixed magnitude — the floor for directional accuracy.
+
+    Any model whose directional accuracy is statistically indistinguishable
+    from 50% (this baseline's expectation) is not predicting direction at
+    all, however good its price-error metrics look.
+    """
+    rng = np.random.default_rng(seed)
+
+    def _predict(history: pd.Series) -> float:
+        sign = 1.0 if rng.random() >= 0.5 else -1.0
+        return float(history.iloc[-1]) * (1.0 + sign * magnitude)
+
+    evaluations = _replay_baseline(df, horizon_candles, lookback, predict_fn=_predict)
+    return aggregate_metrics(evaluations)
+
+
 def buy_and_hold_return(df: pd.DataFrame) -> dict[str, float]:
     """Total and annualised return of simply holding the asset over *df*."""
     if len(df) < 2:
@@ -122,6 +162,8 @@ def compare_to_baselines(
     """
     persistence = naive_persistence(df, horizon_candles, lookback=lookback)
     drift = naive_drift(df, horizon_candles, lookback=lookback)
+    ma = moving_average(df, horizon_candles, lookback=lookback)
+    random_baseline = random_direction(df, horizon_candles, lookback=lookback)
     hold = buy_and_hold_return(df)
 
     def _beats(baseline: dict[str, Any]) -> bool:
@@ -136,7 +178,11 @@ def compare_to_baselines(
         "model": model_metrics,
         "naive_persistence": persistence,
         "naive_drift": drift,
+        "moving_average": ma,
+        "random_direction": random_baseline,
         "buy_and_hold": hold,
         "model_beats_persistence": _beats(persistence),
         "model_beats_drift": _beats(drift),
+        "model_beats_moving_average": _beats(ma),
+        "model_beats_random_direction": _beats(random_baseline),
     }

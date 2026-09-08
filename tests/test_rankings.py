@@ -150,6 +150,20 @@ class TestScanOpportunities:
         assert 0.0 <= rec.opportunity_score <= 100.0
         assert rec.direction in ("bullish", "bearish")
         assert rec.risk_level in ("low", "medium", "high")
+        assert rec.market_regime in ("bull", "bear", "sideways")
+        assert rec.benchmark_regime in ("bull", "bear", "sideways")
+
+    def test_bullish_pick_against_bear_benchmark_flags_the_conflict(self) -> None:
+        df = _make_ohlcv(_smooth_uptrend(), volume=2_000_000.0)
+        # A steady ~0.2%-per-candle decline: any trailing 30-candle window
+        # drops ~6%, comfortably past classify_regime's 5% bear threshold.
+        bear_close = 40_000 * np.cumprod(np.full(250, 0.998))
+        bear_btc = _make_ohlcv(bear_close, volume=50_000_000.0)
+        recommendation, _ = scan_candidate("AAA", df, bear_btc, "1D")
+        assert recommendation is not None
+        assert recommendation.benchmark_regime == "bear"
+        if recommendation.direction == "bullish":
+            assert any("swimming against the tide" in risk for risk in recommendation.key_risks)
 
     def test_scan_candidate_returns_none_and_reasons_when_excluded(self) -> None:
         df = _make_ohlcv(_smooth_uptrend(), volume=1.0)

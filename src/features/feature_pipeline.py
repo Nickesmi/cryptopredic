@@ -13,6 +13,8 @@ Design notes
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -121,3 +123,26 @@ class FeaturePipeline:
         cols += [f"close_lag_{lag}" for lag in self.lag_offsets]
         cols += [f"volatility_{w}" for w in self.volatility_windows]
         return cols
+
+    @property
+    def feature_version(self) -> str:
+        """Deterministic fingerprint of this pipeline's configuration + output shape.
+
+        Changes whenever the indicator set, windows, or column order
+        change — the minimum bar for "feature versions are recorded"
+        (timing-audit Phase 17 / Phase-2 production-safety checklist).
+        This is a content fingerprint, not a semantic version number: it
+        has no notion of "newer" or "older", only "same" or "different",
+        which is exactly what's needed to detect train/live feature skew.
+        """
+        payload = {
+            "sma_windows": self.sma_windows,
+            "ema_spans": self.ema_spans,
+            "rsi_period": self.rsi_period,
+            "bb_window": self.bb_window,
+            "lag_offsets": self.lag_offsets,
+            "volatility_windows": self.volatility_windows,
+            "feature_columns": self.feature_columns,
+        }
+        digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+        return digest[:12]

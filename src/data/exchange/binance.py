@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from collections.abc import AsyncIterator
 
 import aiohttp
@@ -39,12 +40,24 @@ _TF_MAP: dict[str, str] = {
 }
 
 
-def _parse_kline(raw: list) -> CandleBar:
+def _parse_kline(raw: list, now_ms: int | None = None) -> CandleBar:
     """Convert a Binance kline array to a :class:`CandleBar`.
 
     Binance REST kline format:
     [open_time, open, high, low, close, volume, close_time, ...]
+
+    ``GET /api/v3/klines`` does **not** only return fully-elapsed candles —
+    when called without an explicit ``endTime`` it includes the
+    currently-forming candle as the last element, with a ``close`` that is
+    still changing tick-by-tick. Every call site previously hard-coded
+    ``is_closed=True`` regardless of this, which is exactly the "candle not
+    fully closed yet" hazard called out in the timing audit (a prediction
+    must never treat an in-progress candle as if it were finished data).
+    We instead derive ``is_closed`` from the kline's own ``close_time``
+    (index 6): the candle is closed only once that timestamp has passed.
     """
+    close_time_ms = int(raw[6])
+    now_ms = now_ms if now_ms is not None else int(time.time() * 1000)
     return CandleBar(
         time=int(raw[0]) // 1000,  # ms → seconds
         open=float(raw[1]),
@@ -52,7 +65,7 @@ def _parse_kline(raw: list) -> CandleBar:
         low=float(raw[3]),
         close=float(raw[4]),
         volume=float(raw[5]),
-        is_closed=True,
+        is_closed=close_time_ms <= now_ms,
     )
 
 
@@ -116,6 +129,14 @@ class BinanceAdapter(IExchangeAdapter):
         limit: int = 500,
     ) -> list[CandleBar]:
         """Fetch historical klines from Binance REST API.
+
+        Note: the **last** element of the response may be the
+        currently-forming candle (Binance includes it whenever its open
+        time is in the past, even though it hasn't closed yet) — check
+        ``is_closed`` on the last returned bar before treating it as final
+        data. Callers that must never use an incomplete candle (e.g.
+        feature engineering / prediction anchoring) should drop any
+        trailing bar with ``is_closed=False``.
 
         Args:
             symbol:    Binance symbol (e.g. ``"BTCUSDT"``).

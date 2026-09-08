@@ -47,6 +47,20 @@ def test_raises_when_insufficient_data() -> None:
         walk_forward_validate(df, "BTCUSDT", "1D", horizon_candles=3, n_folds=3, min_train_size=200)
 
 
+def test_stride_reduces_prediction_count_without_changing_no_leakage_guarantees() -> None:
+    df = _oscillating_df()
+    dense = walk_forward_validate(
+        df, "BTCUSDT", "1D", horizon_candles=3, n_folds=2, min_train_size=200, stride=1
+    )
+    sparse = walk_forward_validate(
+        df, "BTCUSDT", "1D", horizon_candles=3, n_folds=2, min_train_size=200, stride=5
+    )
+    assert sparse.overall["predictions"] < dense.overall["predictions"]
+    for fold in sparse.folds:
+        assert fold.test_start >= fold.train_end
+        assert fold.test_start - fold.train_end >= 3
+
+
 def test_report_serialises_to_dict() -> None:
     df = _oscillating_df()
     report = walk_forward_validate(

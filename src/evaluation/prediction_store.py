@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Any
 
 from src.config.settings import PREDICTION_DB_PATH
+from src.evaluation.calibration import calibration_from_rows
+from src.evaluation.drift import monitor_prediction_pipeline_drift, summarise_drift
 from src.evaluation.metrics import aggregate_metrics, evaluate_prediction
 
 
@@ -307,6 +309,52 @@ class PredictionStore:
             reverse=True,
         )
 
+    def calibration_report(self, success_field: str = "direction_correct") -> dict[str, Any] | None:
+        """Bucketed confidence-calibration report over every evaluated prediction.
+
+        Returns ``None`` (rather than a misleadingly precise report) when
+        there are zero evaluated predictions to compute it from — this
+        store starts empty and stays empty until something actually calls
+        :meth:`evaluate_prediction`, so "no data yet" must be
+        distinguishable from "calibration is perfect".
+
+        Args:
+            success_field: Which evaluated-row column counts as "success"
+                for calibration purposes. Defaults to directional success;
+                pass e.g. a horizon-success column (once one is populated —
+                see ``src/evaluation/success_criteria.py``) for the
+                stricter "right price AND right time" definition.
+        """
+        rows = self.evaluated_rows()
+        if not rows:
+            return None
+        try:
+            report = calibration_from_rows(rows, success_field=success_field)
+        except (KeyError, ValueError):
+            return None
+        return report.to_dict()
+
+    def drift_report(self, min_rows_per_half: int = 30) -> dict[str, Any] | None:
+        """Compare the older half of evaluated predictions against the newer
+        half to detect prediction/error/confidence distribution drift.
+
+        This is a simple, always-available split (chronological midpoint)
+        rather than a fixed "training baseline" — this store has no
+        separate notion of a training-time reference population, only an
+        append-only evaluation history. Returns ``None`` if there isn't
+        enough evaluated history yet on both sides of the split to compute
+        anything meaningful.
+        """
+        rows = self.evaluated_rows()  # newest first
+        if len(rows) < 2 * min_rows_per_half:
+            return None
+        current_rows = rows[: len(rows) // 2]       # newer half
+        reference_rows = rows[len(rows) // 2 :]      # older half
+        reports = monitor_prediction_pipeline_drift(reference_rows, current_rows)
+        if not reports:
+            return None
+        return summarise_drift(reports)
+
     def dashboard(self) -> dict[str, Any]:
         rows = self.evaluated_rows()
         return {
@@ -327,6 +375,8 @@ class PredictionStore:
             "failure_patterns": recurring_failure_patterns(rows),
             "recommendations": continuous_learning_recommendations(rows),
             "leaderboard": self.leaderboard(),
+            "calibration": self.calibration_report(),
+            "drift": self.drift_report(),
         }
 
     def _init_db(self) -> None:

@@ -28,6 +28,7 @@ from src.evaluation.time_to_target import (
 from src.ranking.liquidity_filter import LiquidityFilterConfig, check_liquidity
 from src.ranking.risk_score import assess_risk
 from src.ranking.score_coins import DEFAULT_WEIGHTS, compute_opportunity_score
+from src.utils.regime import classify_regime
 from src.utils.timeframes import timeframe_to_seconds
 
 DEFAULT_MIN_OPPORTUNITY_SCORE = 65.0
@@ -44,6 +45,8 @@ class OpportunityRecommendation:
     expected_horizon_seconds: int | None
     probability_estimate: float | None
     risk_level: str
+    market_regime: str = "sideways"       # the candidate's own recent regime
+    benchmark_regime: str = "sideways"    # the reference asset's (e.g. BTC) regime
     reasons: list[str] = field(default_factory=list)
     invalidation_price: float = 0.0
     key_risks: list[str] = field(default_factory=list)
@@ -60,6 +63,8 @@ class OpportunityRecommendation:
                 None if self.probability_estimate is None else round(self.probability_estimate, 3)
             ),
             "risk_level": self.risk_level,
+            "market_regime": self.market_regime,
+            "benchmark_regime": self.benchmark_regime,
             "reasons": self.reasons,
             "invalidation_price": round(self.invalidation_price, 8),
             "key_risks": self.key_risks,
@@ -129,6 +134,13 @@ def scan_candidate(
     direction, target_return, target_price = _direction_and_target(clean_df["close"])
     invalidation = _invalidation_price(clean_df, direction)
 
+    market_regime = classify_regime(clean_df["close"])
+    benchmark_regime = (
+        classify_regime(clean_ohlcv(benchmark_df)["close"])
+        if benchmark_df is not None and not benchmark_df.empty
+        else "sideways"
+    )
+
     expected_horizon_seconds: int | None = None
     probability_estimate: float | None = None
     try:
@@ -161,6 +173,14 @@ def scan_candidate(
             f"Empirical hit-rate for this target is only {probability_estimate:.0%} "
             "within the estimated horizon"
         )
+    if direction == "bullish" and benchmark_regime == "bear":
+        key_risks.append(
+            "Bullish pick while the reference market is in a bear regime — swimming against the tide"
+        )
+    elif direction == "bearish" and benchmark_regime == "bull":
+        key_risks.append(
+            "Bearish pick while the reference market is in a bull regime — swimming against the tide"
+        )
 
     recommendation = OpportunityRecommendation(
         symbol=symbol,
@@ -171,6 +191,8 @@ def scan_candidate(
         expected_horizon_seconds=expected_horizon_seconds,
         probability_estimate=probability_estimate,
         risk_level=risk.risk_level,
+        market_regime=market_regime,
+        benchmark_regime=benchmark_regime,
         reasons=opportunity.reasons,
         invalidation_price=invalidation,
         key_risks=key_risks,

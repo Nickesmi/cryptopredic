@@ -7,6 +7,7 @@ addopts = "-ra -q"
 testpaths = [
     "tests",
 ]
+asyncio_mode = "auto"
 
 [tool.black]
 line-length = 88
