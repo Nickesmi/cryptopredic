@@ -164,6 +164,7 @@ async def ws_candles(
 
 @router.get("/predict/{symbol}")
 async def predict(
+    request: Request,
     symbol: str,
     tf: Annotated[str, Query()] = "1H",
     n: Annotated[int, Query(ge=5, le=50, description="Number of future candles")] = 20,
