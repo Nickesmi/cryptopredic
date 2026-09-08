@@ -1,0 +1,11 @@
+Metadata-Version: 2.4
+Name: crypto_alpha_engine
+Version: 0.1.0
+Summary: A machine learning and quantitative research platform for forecasting cryptocurrency price movements and ranking high-potential digital assets.
+Author: Crypto Alpha Engine Contributors
+License: MIT
+License-File: LICENSE
+Dynamic: author
+Dynamic: license
+Dynamic: license-file
+Dynamic: summary

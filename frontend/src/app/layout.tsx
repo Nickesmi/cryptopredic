@@ -3,6 +3,7 @@ import './globals.css';
 import { Activity, BarChart2, Compass, Layers, Settings, Shield, Search } from 'lucide-react';
 import Link from 'next/link';
 import { CommandPalette } from '../components/CommandPalette';
+import { RealTimeClock } from '../components/RealTimeClock';
 
 export const metadata: Metadata = {
   title: 'Crypto Alpha Engine | Quant Terminal',
@@ -24,9 +25,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </div>
             <nav className="p-4 space-y-2">
               <SidebarItem icon={<Compass />} label="Dashboard" href="/" />
+              <SidebarItem icon={<Activity />} label="Live Chart" href="/chart" />
               <SidebarItem icon={<BarChart2 />} label="Screener" href="/screener" />
-              <SidebarItem icon={<Layers />} label="Coin Analysis" href="/coin/BTC" />
-              <SidebarItem icon={<Shield />} label="Forecast Lab" href="#" />
+              <SidebarItem icon={<Layers />} label="Coin Analysis" href="/coin/BTCUSDT" />
+              <SidebarItem icon={<Shield />} label="Performance" href="/performance" />
             </nav>
           </div>
           <div className="p-4 border-t border-[#ffffff0f]">
@@ -36,9 +38,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
         {/* Global Dashboard Shell */}
         <div className="flex-1 flex flex-col relative z-0">
-          <header className="h-16 border-b border-[#ffffff0f] bg-core/80 backdrop-blur-md flex items-center justify-between px-6">
+          <header className="h-16 border-b border-[#ffffff0f] bg-core/80 backdrop-blur-md flex items-center justify-between px-6 shrink-0">
              <CommandPalette />
              <div className="flex items-center gap-4">
+                <RealTimeClock />
                 <div className="flex items-center gap-2 px-3 py-1 bg-bullish/10 border border-bullish/20 rounded-full">
                   <div className="w-2 h-2 rounded-full bg-bullish animate-pulse"></div>
                   <span className="text-xs font-semibold text-bullish tracking-wider">Models Live</span>
@@ -46,7 +49,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
              </div>
           </header>
           
-          <main className="flex-1 overflow-y-auto p-8 relative">
+          <main className="flex-1 overflow-hidden p-6 relative flex flex-col">
              {/* Cyber glow background accent */}
              <div className="absolute top-0 left-1/2 -ml-[400px] w-[800px] h-[300px] bg-premium/10 blur-[120px] rounded-full pointer-events-none -z-10"></div>
              {children}

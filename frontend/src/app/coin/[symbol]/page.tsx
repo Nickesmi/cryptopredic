@@ -1,10 +1,27 @@
-import Link from 'next/link';
-import { ArrowLeft, Target, Shield, TrendingUp, Activity, BarChart2, CheckCircle2, AlertTriangle, Zap } from 'lucide-react';
-import { RechartsChart } from '../../../components/RechartsChart';
+'use client';
 
-export default async function CoinAnalysisPage({ params }: { params: Promise<{ symbol: string }> }) {
-  const resolvedParams = await params;
-  const symbol = resolvedParams.symbol || 'ACT';
+import { use } from 'react';
+import dynamic from 'next/dynamic';
+import Link from 'next/link';
+import { ArrowLeft, Target, Activity, BarChart2, AlertTriangle, Zap, Loader2, TrendingUp, Shield } from 'lucide-react';
+import type { SupportedSymbol } from '../../../types/chart';
+import type { TradingChartProps } from '../../../components/chart/TradingChart';
+
+const TradingChart = dynamic<TradingChartProps>(
+  () => import('../../../components/chart/TradingChart').then(m => ({ default: m.TradingChart })),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex items-center justify-center w-full h-full bg-[#0A0B0F]">
+        <Loader2 className="animate-spin text-premium" size={28} />
+      </div>
+    ),
+  },
+);
+
+export default function CoinAnalysisPage({ params }: { params: Promise<{ symbol: string }> }) {
+  const resolvedParams = use(params);
+  const symbol = (resolvedParams.symbol || 'BTCUSDT') as SupportedSymbol;
   
   return (
     <div className="space-y-6 pb-12 animate-in fade-in zoom-in duration-500">
@@ -16,11 +33,11 @@ export default async function CoinAnalysisPage({ params }: { params: Promise<{ s
        <header className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6">
          <div className="flex items-center gap-4">
            <div className="w-16 h-16 rounded-full bg-surface border border-[#ffffff1a] flex items-center justify-center text-2xl font-bold text-primary">
-             {symbol}
+             {symbol.substring(0, 3)}
            </div>
            <div>
              <h1 className="text-3xl font-extrabold text-primary flex items-center gap-3">
-               {symbol} <span className="text-xl text-muted font-normal">/ USD</span>
+               {symbol.replace('USDT', '')} <span className="text-xl text-muted font-normal">/ USDT</span>
              </h1>
              <div className="flex gap-3 text-sm font-medium mt-1">
                <span className="text-secondary">Rank #42</span>
@@ -47,14 +64,15 @@ export default async function CoinAnalysisPage({ params }: { params: Promise<{ s
                  <h2 className="text-lg font-bold text-primary flex items-center gap-2">
                    <Target className="text-premium" size={20} /> Forecast Trajectory & Confidence Cone
                  </h2>
-                 <div className="flex gap-2 text-xs font-semibold">
-                   <div className="px-3 py-1 rounded bg-premium/20 text-premium border border-premium/30 cursor-pointer">7D</div>
-                   <div className="px-3 py-1 rounded bg-surface text-secondary hover:text-primary cursor-pointer border border-transparent">30D</div>
-                 </div>
               </div>
-              <div className="flex-1 relative">
-                 <RechartsChart />
-              </div>
+               <div className="flex-1 relative rounded-lg overflow-hidden border border-[#ffffff10]">
+                  <TradingChart
+                    symbol={symbol}
+                    timeframe="1H"
+                    predictionHorizon={20}
+                    onForecastUpdate={() => {}}
+                  />
+               </div>
             </div>
 
             {/* AI Reasoning Panel */}
@@ -137,7 +155,7 @@ function Metric({ title, value, emphasize }: { title: string, value: string, emp
   );
 }
 
-function ReasonCard({ icon, title, detail }: { icon: any, title: string, detail: string }) {
+function ReasonCard({ icon, title, detail }: { icon: React.ReactNode, title: string, detail: string }) {
   return (
     <div className="p-4 rounded-xl border border-[#ffffff0f] bg-card hover:border-premium/40 transition-colors cursor-crosshair group">
       <div className="flex items-center gap-3 mb-2">
@@ -149,8 +167,8 @@ function ReasonCard({ icon, title, detail }: { icon: any, title: string, detail:
   );
 }
 
-function TableRow({ horizon, target, prob, signal, color }: any) {
-  const cMap: any = { bullish: 'text-bullish', neutral: 'text-neutral', bearish: 'text-bearish' };
+function TableRow({ horizon, target, prob, signal, color }: { horizon: string, target: string, prob: string, signal: string, color: 'bullish' | 'neutral' | 'bearish' }) {
+  const cMap: Record<'bullish' | 'neutral' | 'bearish', string> = { bullish: 'text-bullish', neutral: 'text-neutral', bearish: 'text-bearish' };
   return (
     <tr>
       <td className="py-3 font-bold text-primary">{horizon}</td>

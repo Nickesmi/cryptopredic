@@ -24,9 +24,16 @@ REPO_ROOT: Path = Path(__file__).resolve().parent.parent.parent
 
 DATA_DIR: Path = Path(os.getenv("DATA_DIR", str(REPO_ROOT / "data" / "raw")))
 MODEL_DIR: Path = Path(os.getenv("MODEL_DIR", str(REPO_ROOT / "models" / "saved")))
+PREDICTION_DB_PATH: Path = Path(
+    os.getenv(
+        "PREDICTION_DB_PATH",
+        str(REPO_ROOT / "data" / "prediction_evaluation.sqlite3"),
+    )
+)
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
+PREDICTION_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 # ---------------------------------------------------------------------------
 # CoinGecko
