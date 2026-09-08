@@ -24,6 +24,8 @@ of the same size — see ``_trend_quality`` and ``_volatility_adjusted``.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -41,6 +43,30 @@ DEFAULT_WEIGHTS: dict[str, float] = {
 }
 
 assert abs(sum(DEFAULT_WEIGHTS.values()) - 1.0) < 1e-9
+
+# Bump this whenever a sub-score's *formula* changes (not just its
+# weight) -- score_coins.py has no fitted model to fingerprint the way
+# src/models/model_manager.py does, so the scanner's "version" is a
+# fingerprint of its configuration (weights) plus this manually-bumped
+# formula identity. See scanner_version() below.
+_RISK_PENALTY_FORMULA_VERSION = "risk_penalty_v1"
+
+
+def scanner_version(weights: dict[str, float] = DEFAULT_WEIGHTS) -> str:
+    """Deterministic provenance fingerprint for the opportunity-scoring configuration.
+
+    Phase 4 audit, Section 20 ("every live recommendation should record
+    ... scanner version"): before this, ``OpportunityRecommendation`` had
+    no version field at all, mirroring the exact gap Phase 2 found and
+    fixed for the price forecaster's ``model_version``/``feature_version``.
+    Two scans get the same ``scanner_version`` iff they used the same
+    sub-score weights and the same formula identity — changing a weight,
+    or bumping ``_RISK_PENALTY_FORMULA_VERSION`` when a formula changes,
+    changes this fingerprint.
+    """
+    payload = {"weights": weights, "risk_penalty_formula": _RISK_PENALTY_FORMULA_VERSION}
+    digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+    return digest[:12]
 
 
 @dataclass

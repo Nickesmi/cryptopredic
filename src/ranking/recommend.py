@@ -15,6 +15,7 @@ than force a recommendation.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 import numpy as np
 import pandas as pd
@@ -25,9 +26,11 @@ from src.evaluation.time_to_target import (
     most_likely_horizon,
     time_to_target_report,
 )
+from src.features.feature_pipeline import FeaturePipeline
 from src.ranking.liquidity_filter import LiquidityFilterConfig, check_liquidity
 from src.ranking.risk_score import assess_risk
 from src.ranking.score_coins import DEFAULT_WEIGHTS, compute_opportunity_score
+from src.ranking.score_coins import scanner_version as compute_scanner_version
 from src.utils.regime import classify_regime
 from src.utils.timeframes import timeframe_to_seconds
 
@@ -50,6 +53,9 @@ class OpportunityRecommendation:
     reasons: list[str] = field(default_factory=list)
     invalidation_price: float = 0.0
     key_risks: list[str] = field(default_factory=list)
+    scanner_version: str = ""             # fingerprint of the scoring weights/formula used
+    feature_version: str = ""             # fingerprint of the FeaturePipeline config used
+    scanned_at: str = ""                  # ISO-8601 UTC timestamp the scan was generated
 
     def to_dict(self) -> dict:
         return {
@@ -68,6 +74,9 @@ class OpportunityRecommendation:
             "reasons": self.reasons,
             "invalidation_price": round(self.invalidation_price, 8),
             "key_risks": self.key_risks,
+            "scanner_version": self.scanner_version,
+            "feature_version": self.feature_version,
+            "scanned_at": self.scanned_at,
         }
 
 
@@ -196,6 +205,9 @@ def scan_candidate(
         reasons=opportunity.reasons,
         invalidation_price=invalidation,
         key_risks=key_risks,
+        scanner_version=compute_scanner_version(DEFAULT_WEIGHTS),
+        feature_version=FeaturePipeline().feature_version,
+        scanned_at=datetime.now(timezone.utc).isoformat(),
     )
     return recommendation, []
 

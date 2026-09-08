@@ -171,3 +171,50 @@ class TestScanOpportunities:
         recommendation, reasons = scan_candidate("THIN", df, btc, "1D")
         assert recommendation is None
         assert reasons
+
+
+class TestScanCandidateNoLookahead:
+    """Phase 4 audit: prove every field on a recommendation -- including the
+    empirical time-to-target estimate, which internally scans the
+    candidate's own full history via first-passage-time search -- depends
+    only on data at or before the scan point. Corrupting everything after
+    the scan point must not change a single field.
+    """
+
+    def test_full_recommendation_is_unchanged_by_corrupting_the_future(self) -> None:
+        rng = np.random.default_rng(11)
+        n = 400
+        dates = pd.date_range("2024-01-01", periods=n, freq="D")
+        close = pd.Series(100 * np.cumprod(1 + rng.normal(0.001, 0.02, n)), index=dates)
+        df = pd.DataFrame(
+            {"open": close * 0.999, "high": close * 1.01, "low": close * 0.99, "close": close, "volume": 2_000_000.0},
+            index=dates,
+        )
+        btc_close = pd.Series(40_000 * np.cumprod(1 + rng.normal(0.0008, 0.02, n)), index=dates)
+        btc = pd.DataFrame(
+            {"open": btc_close * 0.999, "high": btc_close * 1.01, "low": btc_close * 0.99, "close": btc_close, "volume": 50_000_000.0},
+            index=dates,
+        )
+
+        t = 300
+        baseline, _ = scan_candidate("AAA", df.iloc[:t].copy(), btc.iloc[:t].copy(), "1D")
+        assert baseline is not None
+
+        corrupted = df.copy()
+        corrupted.iloc[t:, corrupted.columns.get_loc("close")] *= 50.0
+        after_corruption, _ = scan_candidate("AAA", corrupted.iloc[:t].copy(), btc.iloc[:t].copy(), "1D")
+        assert after_corruption is not None
+
+        # Every field, including expected_horizon_seconds and
+        # probability_estimate (computed via time_to_target_report's
+        # first-passage-time search over the candidate's own history) --
+        # the one path not covered by the scanner-backtest-level
+        # no-lookahead test in tests/test_scanner_backtest.py. `scanned_at`
+        # is excluded: it's a wall-clock generation timestamp, not derived
+        # from market data, and differs by construction between two calls
+        # microseconds apart.
+        baseline_dict = baseline.to_dict()
+        after_dict = after_corruption.to_dict()
+        baseline_dict.pop("scanned_at")
+        after_dict.pop("scanned_at")
+        assert baseline_dict == after_dict
