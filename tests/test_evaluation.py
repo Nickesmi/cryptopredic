@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -43,13 +44,32 @@ def test_prediction_store_persists_and_evaluates(tmp_path):
 
 
 def test_backtest_replays_without_future_data():
-    dates = pd.date_range("2024-01-01", periods=180, freq="D")
-    close = pd.Series(range(100, 280), dtype=float)
+    # NOTE on fixture design: `close` must share `dates`' index — building
+    # the DataFrame with index=dates while close/open/high/low carry a bare
+    # RangeIndex causes pandas to reindex-align them against `dates`,
+    # silently producing an all-NaN frame. This previously went unnoticed
+    # because the backtest crashed earlier (ModelManager.predict was never
+    # awaited) before ever touching the price data.
+    #
+    # A monotonically increasing series (the original fixture) is also the
+    # wrong shape for this test: XGBoost (and tree ensembles generally)
+    # cannot extrapolate past the feature-value range seen during training,
+    # so on an ever-climbing series every walk-forward window is asked to
+    # predict beyond its own training range and the model's predictions
+    # systematically undershoot — a real limitation worth knowing about
+    # (see docs/TIMING_AUDIT_REPORT.md), but not what this test is checking.
+    # A bounded, oscillating series keeps future feature values inside the
+    # training range so directional accuracy actually reflects backtest
+    # correctness rather than an architectural extrapolation limit.
+    n = 250
+    dates = pd.date_range("2024-01-01", periods=n, freq="D")
+    t = np.arange(n)
+    close = pd.Series(200 + 40 * np.sin(2 * np.pi * t / 30), index=dates, dtype=float)
     candles = pd.DataFrame(
         {
-            "open": close - 0.5,
-            "high": close + 1.0,
-            "low": close - 1.0,
+            "open": close - 0.2,
+            "high": close + 0.5,
+            "low": close - 0.5,
             "close": close,
             "volume": 1000.0,
         },
@@ -62,12 +82,23 @@ def test_backtest_replays_without_future_data():
             symbol="BTCUSDT",
             timeframe="1D",
             horizon=3,
-            lookback=30,
+            lookback=120,
         ),
     )
 
     assert result.metrics["predictions"] > 0
-    assert result.metrics["directional_accuracy"] == pytest.approx(1.0)
-    first = result.predictions[0]
-    assert first["anchor_time"] < first["actual_time"]
-    assert first["prediction_id"].startswith("bt-BTCUSDT-1D")
+    # Direction is genuinely ambiguous right at the sine wave's turning
+    # points, so we don't expect literally 1.0 — but a competent no-leakage
+    # 3-day-ahead model on a smooth, bounded, cyclical series should still
+    # get the great majority of calls right.
+    assert result.metrics["directional_accuracy"] >= 0.85
+    for prediction in result.predictions:
+        assert prediction["anchor_time"] < prediction["actual_time"]
+        assert prediction["prediction_id"].startswith("bt-BTCUSDT-1D")
+        # The evaluation window must match the horizon the model was
+        # actually trained on — this is the exact invariant that was
+        # violated by the timeframe/horizon-in-days confusion this audit
+        # fixed in src/models/model_manager.py.
+        assert prediction["actual_time"] - prediction["anchor_time"] == pytest.approx(
+            3 * 86400, abs=1
+        )

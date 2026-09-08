@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.api.routes_forecast import router as forecast_router
 from src.api.routes_evaluation import router as evaluation_router
 from src.api.routes_health import router as health_router
+from src.api.routes_rankings import router as rankings_router
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -55,3 +56,4 @@ app.add_middleware(
 app.include_router(health_router, prefix="/api")
 app.include_router(forecast_router, prefix="/api")
 app.include_router(evaluation_router, prefix="/api")
+app.include_router(rankings_router, prefix="/api")

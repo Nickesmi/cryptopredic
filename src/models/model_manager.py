@@ -33,6 +33,26 @@ Design principles
   forecasters predict; ``ForecastObject`` carries data.
 * Dependency Inversion: the API layer depends on ``ModelManager``
   and ``ForecastObject``, not on ``XGBRegressor``.
+
+Horizon semantics (read this before changing anything below)
+--------------------------------------------------------------
+The forecast horizon is **always** ``n_candles`` candles of the
+**same timeframe** the caller requested, and the training target is
+built on the **same candle series** that is displayed on the chart:
+
+    target(t, n_candles) = close price n_candles * timeframe ahead of t
+
+There used to be a second, hidden notion of "horizon" here
+(``_TF_TO_DAYS`` / ``_HORIZON_MAP``) that silently retrained the model
+to predict a price 1/7/30 *calendar days* ahead regardless of the
+timeframe or ``n_candles`` the caller asked for, while the API still
+labelled/expired the prediction as if it were an ``n_candles``-ahead
+forecast at the requested timeframe. That is precisely why the system
+could say "BTC will reach $X within 4 hours" (a 1H-timeframe, small
+``n_candles`` request) while the model had actually been trained to
+answer "what is BTC's price 30 days from now" — the two were
+unrelated. See ``docs/TIMING_AUDIT_REPORT.md`` for the full writeup.
+Do not reintroduce a timeframe -> horizon lookup table.
 """
 
 from __future__ import annotations
@@ -44,35 +64,24 @@ from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 
-from src.config.settings import HISTORY_DAYS, TIER1_SYMBOLS
-from src.data.fetch_prices import CoinGeckoPriceRepository
+from src.data.exchange.factory import ExchangeFactory
 from src.data.preprocessing import add_log_returns, clean_ohlcv
 from src.features.feature_pipeline import FeaturePipeline
 from src.models.xgboost_model import ForecastResult, TimeSeriesForecaster
+from src.utils.candles import bars_to_frame
+from src.utils.timeframes import timeframe_to_seconds
 
 logger = logging.getLogger(__name__)
 
-# ── Mapping: Binance symbol → CoinGecko coin ID (for model training data) ──
-_SYMBOL_TO_COINGECKO: dict[str, str] = {
-    "BTCUSDT": "bitcoin",
-    "ETHUSDT": "ethereum",
-    "SOLUSDT": "solana",
-}
+# ── Supported trading pairs ────────────────────────────────────────────────
+_SUPPORTED_SYMBOLS: set[str] = {"BTCUSDT", "ETHUSDT", "SOLUSDT"}
 
-# ── Canonical horizon in calendar days per timeframe ───────────────────────
-_TF_TO_DAYS: dict[str, int] = {
-    "1m": 1,
-    "5m": 1,
-    "15m": 7,
-    "30m": 7,
-    "1H": 7,
-    "4H": 30,
-    "1D": 30,
-    "1W": 30,
-}
-
-# Registered forecast horizons (days) — must be in FORECAST_HORIZONS
-_HORIZON_MAP: dict[int, int] = {1: 1, 7: 7, 30: 30}
+# Minimum number of *post-feature-engineering* rows required so that at
+# least a handful of training samples remain once the horizon shift removes
+# the trailing rows. This only guards against degenerate windows (e.g. a
+# handful of candles); it intentionally does not impose a large minimum so
+# that short backtest lookback windows remain usable.
+_MIN_FEATURE_ROWS_OVER_HORIZON = 5
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -112,7 +121,13 @@ class ForecastObject:
     Attributes:
         symbol:         Trading pair (e.g. ``"BTCUSDT"``).
         timeframe:      Candle period string (e.g. ``"1H"``).
-        n_candles:      Number of projected future candles.
+        n_candles:      Forecast horizon, expressed as a count of
+                        ``timeframe`` candles. ``future_prices[-1]`` is
+                        the model's actual prediction for
+                        ``anchor_time + n_candles * timeframe``; every
+                        other point on ``future_prices`` is an
+                        interpolated visual guide, not an independent
+                        model output (see ``path_is_interpolated``).
         future_prices:  Central predicted price at each future candle.
         upper_band:     Upper confidence interval prices.
         lower_band:     Lower confidence interval prices.
@@ -130,6 +145,9 @@ class ForecastObject:
     metadata: ForecastMetadata
     anchor_time: int = 0        # timestamp of last historical candle
     anchor_price: float = 0.0   # close price of last historical candle
+    target_timestamp: int = 0   # timestamp the model's prediction is actually for
+    horizon_seconds: int = 0    # anchor_time -> target_timestamp, in seconds
+    path_is_interpolated: bool = True
     prediction_id: str | None = None
     model_version: str = "1.0.0"
     historical_candles: list[dict] = field(default_factory=list)
@@ -163,6 +181,9 @@ class ForecastObject:
             "model_version": self.model_version,
             "anchor_time": self.anchor_time,
             "anchor_price": self.anchor_price,
+            "target_timestamp": self.target_timestamp,
+            "horizon_seconds": self.horizon_seconds,
+            "path_is_interpolated": self.path_is_interpolated,
             "candles": candles,
             "upper_band": upper,
             "lower_band": lower,
@@ -210,8 +231,12 @@ class ModelManager:
 
     def __init__(self, default_model: str = "xgboost") -> None:
         self._default_model = default_model
-        # Cache trained forecasters keyed by (coingecko_id, horizon_days)
-        self._forecasters: dict[tuple[str, int], TimeSeriesForecaster] = {}
+        # Cache trained forecasters keyed by (symbol, timeframe, n_candles) —
+        # each distinct (timeframe, horizon) combination gets its own model.
+        # (Previously keyed by (coingecko_id, horizon_days), which meant two
+        # *different* chart timeframes that happened to map to the same
+        # bucketed horizon-in-days silently shared one cached model.)
+        self._forecasters: dict[tuple[str, str, int], TimeSeriesForecaster] = {}
         self._pipeline = FeaturePipeline()
 
     @property
@@ -225,14 +250,21 @@ class ModelManager:
         timeframe: str,
         n_candles: int = 20,
         model: str = "auto",
+        http_session=None,
     ) -> ForecastObject:
         """Generate a forecast and return a :class:`ForecastObject`.
 
+        Fetches OHLCV candles at the *requested* timeframe from the same
+        exchange (Binance) that powers the live chart, so the model is
+        trained and evaluated on exactly the data the user sees — no
+        second, mismatched data source and no hidden horizon remapping.
+
         Args:
-            symbol:    Trading pair (e.g. ``"BTCUSDT"``).
-            timeframe: Candle period string.
-            n_candles: Number of future candles to project.
-            model:     Model selection key (``"auto"``, ``"xgboost"``, …).
+            symbol:      Trading pair (e.g. ``"BTCUSDT"``).
+            timeframe:   Candle period string.
+            n_candles:   Forecast horizon, in candles of *timeframe*.
+            model:       Model selection key (``"auto"``, ``"xgboost"``, …).
+            http_session: Optional shared ``aiohttp.ClientSession``.
 
         Returns:
             :class:`ForecastObject` with central prediction + confidence bands.
@@ -240,45 +272,93 @@ class ModelManager:
         Raises:
             ValueError: If *symbol* is not supported.
         """
-        coin_id = _SYMBOL_TO_COINGECKO.get(symbol.upper())
-        if coin_id is None:
+        symbol = symbol.upper()
+        if symbol not in _SUPPORTED_SYMBOLS:
             raise ValueError(
-                f"Symbol '{symbol}' not supported. "
-                f"Supported: {list(_SYMBOL_TO_COINGECKO.keys())}"
+                f"Symbol '{symbol}' not supported. Supported: {sorted(_SUPPORTED_SYMBOLS)}"
             )
 
         resolved_model = self._MODEL_REGISTRY.get(model, self._default_model)
         logger.info(
-            "Generating %d-candle forecast for %s/%s using %s",
+            "Generating %d-candle (%s) forecast for %s using %s",
             n_candles,
-            symbol,
             timeframe,
+            symbol,
             resolved_model,
         )
 
-        # Map timeframe → daily horizon for the model
-        horizon_days = _TF_TO_DAYS.get(timeframe, 1)
-        # Clamp to supported horizon
-        if horizon_days not in _HORIZON_MAP:
-            horizon_days = min(
-                _HORIZON_MAP.keys(), key=lambda h: abs(h - horizon_days)
-            )
+        adapter = ExchangeFactory.create("binance", session=http_session)
+        bars = await adapter.get_candles(
+            symbol, timeframe, limit=1000
+        )
+        raw_df = bars_to_frame(bars)
 
-        # Fetch data + build features
-        repo = CoinGeckoPriceRepository()
-        raw_df = repo.fetch(coin_id, HISTORY_DAYS)
+        return self.predict_from_frame(
+            symbol=symbol,
+            timeframe=timeframe,
+            raw_df=raw_df,
+            n_candles=n_candles,
+            model=model,
+        )
+
+    def predict_from_frame(
+        self,
+        symbol: str,
+        timeframe: str,
+        raw_df: pd.DataFrame,
+        n_candles: int = 20,
+        model: str = "auto",
+    ) -> ForecastObject:
+        """Synchronous core of :meth:`predict`, operating on an in-memory OHLCV frame.
+
+        This is the single code path used by both live inference
+        (:meth:`predict`) and the backtester (``src/evaluation/backtest.py``).
+        Using one function for both guarantees that feature engineering,
+        target construction, and horizon semantics can never drift apart
+        between training/backtesting and live inference.
+
+        Args:
+            symbol:     Trading pair, already validated/upper-cased by the caller.
+            timeframe:  Candle period string.
+            raw_df:     OHLCV DataFrame indexed by UTC timestamp, ascending,
+                        columns ``[open, high, low, close, volume]``. Must
+                        contain only data known as of the last row (the
+                        caller is responsible for not leaking future rows
+                        during backtesting).
+            n_candles:  Forecast horizon, in candles of *timeframe*.
+            model:      Model selection key.
+
+        Returns:
+            :class:`ForecastObject` with central prediction + confidence bands.
+        """
+        if n_candles < 1:
+            raise ValueError("n_candles must be >= 1")
+
+        resolved_model = self._MODEL_REGISTRY.get(model, self._default_model)
+        interval_seconds = timeframe_to_seconds(timeframe)
+        horizon_steps = n_candles
+
         clean_df = add_log_returns(clean_ohlcv(raw_df))
         feature_df = self._pipeline.build(clean_df)
 
+        min_rows = horizon_steps + _MIN_FEATURE_ROWS_OVER_HORIZON
+        if len(feature_df) < min_rows:
+            raise ValueError(
+                f"Insufficient history for {symbol}/{timeframe}: "
+                f"{len(feature_df)} usable candles after feature engineering, "
+                f"need at least {min_rows} (horizon={horizon_steps})."
+            )
+
         feature_cols = self._pipeline.feature_columns
         X = feature_df[feature_cols].values
-        y = feature_df["close"].shift(-horizon_days).dropna().values
+        y = feature_df["close"].shift(-horizon_steps).dropna().values
         X_train = X[: len(y)]
 
-        # Get or train forecaster
-        cache_key = (coin_id, horizon_days)
+        # Get or train forecaster — cache key includes timeframe so a
+        # 1H-horizon model can never be silently reused for a 4H request.
+        cache_key = (symbol, timeframe, horizon_steps)
         if cache_key not in self._forecasters:
-            forecaster = TimeSeriesForecaster(horizon=horizon_days)
+            forecaster = TimeSeriesForecaster(horizon=horizon_steps)
             forecaster.train(
                 X_train,
                 y,
@@ -292,12 +372,15 @@ class ModelManager:
         # Current price (last close)
         current_price = float(feature_df["close"].iloc[-1])
         current_time = int(feature_df.index[-1].timestamp())
+        target_timestamp = current_time + horizon_steps * interval_seconds
 
         # Predicted price at horizon
         X_latest = X[-1:].reshape(1, -1)
         predicted_price = float(forecaster.predict_latest(X_latest))
 
-        # Build projected future prices (linear interpolation to predicted)
+        # Build projected future prices (linear interpolation to predicted).
+        # Only the terminal point (index n_candles-1) is the model's actual
+        # output — see ForecastObject.path_is_interpolated.
         future_prices = _interpolate_prices(
             start=current_price,
             end=predicted_price,
@@ -319,7 +402,6 @@ class ModelManager:
         ]
 
         # Compute timestamps for projected candles
-        interval_seconds = _timeframe_to_seconds(timeframe)
         timestamps = [
             current_time + (i + 1) * interval_seconds
             for i in range(n_candles)
@@ -329,7 +411,10 @@ class ModelManager:
         change_pct = (predicted_price - current_price) / current_price * 100
         direction = "bullish" if change_pct >= 0 else "bearish"
 
-        # Proxy confidence from band width at horizon
+        # Proxy confidence from band width at horizon. NOTE: this is a
+        # volatility-derived heuristic, not an empirically calibrated
+        # probability — see src/evaluation/metrics.calibration_curve() to
+        # check how well it tracks actual hit-rates before trusting it.
         band_width_pct = (upper_band[-1] - lower_band[-1]) / predicted_price
         confidence = max(0.0, min(1.0, 1.0 - band_width_pct * 5))
         support_levels = _support_levels(feature_df["low"].tail(60).tolist())
@@ -374,6 +459,9 @@ class ModelManager:
             metadata=metadata,
             anchor_time=current_time,
             anchor_price=current_price,
+            target_timestamp=target_timestamp,
+            horizon_seconds=horizon_steps * interval_seconds,
+            path_is_interpolated=n_candles > 1,
             model_version="1.0.0",
             historical_candles=recent_candles,
             technical_indicators=latest_indicators,
@@ -384,8 +472,8 @@ class ModelManager:
             market_regime=market_regime,
             reasoning_summary=(
                 f"{resolved_model} projects a {direction} move over {n_candles} "
-                f"{timeframe} candles with {confidence:.1%} confidence in a "
-                f"{market_regime} regime."
+                f"{timeframe} candles ({horizon_steps * interval_seconds / 3600:.1f}h) "
+                f"with {confidence:.1%} confidence in a {market_regime} regime."
             ),
         )
 
@@ -403,21 +491,6 @@ def _interpolate_prices(
         return [end]
     step = (end - start) / n
     return [start + step * (i + 1) for i in range(n)]
-
-
-def _timeframe_to_seconds(tf: str) -> int:
-    """Convert a canonical timeframe string to a second count."""
-    mapping = {
-        "1m": 60,
-        "5m": 300,
-        "15m": 900,
-        "30m": 1800,
-        "1H": 3600,
-        "4H": 14400,
-        "1D": 86400,
-        "1W": 604800,
-    }
-    return mapping.get(tf, 3600)
 
 
 def _support_levels(lows: list[float]) -> list[float]:

@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse
 from src.data.exchange.factory import ExchangeFactory
 from src.evaluation.prediction_store import PredictionStore
 from src.models.model_manager import ModelManager
+from src.utils.timeframes import timeframe_to_seconds
 
 logger = logging.getLogger(__name__)
 
@@ -202,6 +203,7 @@ async def predict(
             timeframe=tf,
             n_candles=n_candles,
             model=model,
+            http_session=request.app.state.http_session,
         )
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
@@ -209,8 +211,12 @@ async def predict(
         logger.error("Prediction error for %s: %s", symbol, exc)
         return JSONResponse({"error": "Prediction failed."}, status_code=500)
 
-    interval_seconds = _timeframe_to_seconds(forecast.timeframe)
-    expires_at = forecast.anchor_time + forecast.n_candles * interval_seconds
+    # The prediction expires exactly when the model's target timestamp is
+    # reached — i.e. anchor_time + n_candles * timeframe, the same horizon
+    # the model was actually trained to predict. Do NOT recompute this from
+    # a different notion of "horizon"; forecast.target_timestamp is the one
+    # source of truth (see src/models/model_manager.py's module docstring).
+    expires_at = forecast.target_timestamp
     bullish_probability = (
         forecast.metadata.confidence
         if forecast.metadata.direction == "bullish"
@@ -254,17 +260,3 @@ async def predict(
 async def list_models() -> JSONResponse:
     """Return available AI model names for the model selector UI."""
     return JSONResponse({"models": _model_manager.available_models})
-
-
-def _timeframe_to_seconds(tf: str) -> int:
-    mapping = {
-        "1m": 60,
-        "5m": 300,
-        "15m": 900,
-        "30m": 1800,
-        "1H": 3600,
-        "4H": 14400,
-        "1D": 86400,
-        "1W": 604800,
-    }
-    return mapping.get(tf, 3600)

@@ -131,11 +131,22 @@ class TimeSeriesForecaster:
         y: np.ndarray,
         feature_names: list[str] | None = None,
         eval_fraction: float = 0.1,
+        embargo: int | None = None,
     ) -> dict[str, float]:
         """Fit the XGBoost model on labelled training data.
 
         An optional hold-out split is evaluated to compute validation
         metrics (MAE, RMSE, MAPE).
+
+        Because targets are built with the Direct Strategy
+        (``y[t] = price[t + horizon]``), a training row near the
+        train/validation boundary has a target that reads *into* the
+        validation feature window. Without a purge gap this leaks
+        validation-period information into training and inflates
+        validation metrics. We therefore drop ``embargo`` rows
+        immediately before the split (an "embargo" gap), defaulting to
+        ``self.horizon`` so no training target overlaps a validation
+        timestamp.
 
         Args:
             X:              Feature matrix of shape ``(n_samples, n_features)``.
@@ -144,6 +155,9 @@ class TimeSeriesForecaster:
             feature_names:  Column names corresponding to *X* columns.
             eval_fraction:  Fraction of *X* reserved for hold-out evaluation.
                             Set to ``0`` to skip validation.
+            embargo:        Number of rows to purge immediately before the
+                            validation split to prevent target leakage.
+                            Defaults to ``self.horizon``.
 
         Returns:
             Dictionary with validation metrics ``{mae, rmse, mape}``.
@@ -151,11 +165,19 @@ class TimeSeriesForecaster:
         if feature_names is not None:
             self._feature_names = list(feature_names)
 
+        if embargo is None:
+            embargo = self.horizon
+
         n = len(X)
         if eval_fraction > 0 and n > 10:
             split = max(1, int(n * (1 - eval_fraction)))
-            X_train, X_val = X[:split], X[split:]
-            y_train, y_val = y[:split], y[split:]
+            train_end = max(1, split - max(0, embargo))
+            X_train, X_val = X[:train_end], X[split:]
+            y_train, y_val = y[:train_end], y[split:]
+            if len(X_train) == 0:
+                # Embargo consumed the entire training block — fall back
+                # to an un-embargoed split rather than fitting on nothing.
+                X_train, y_train = X[:split], y[:split]
         else:
             X_train, X_val = X, None
             y_train, y_val = y, None
