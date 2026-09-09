@@ -1,0 +1,139 @@
+{
+  "region_split": {
+    "design": [
+      0,
+      4000
+    ],
+    "validation": [
+      4000,
+      6000
+    ],
+    "test": [
+      6000,
+      8000
+    ]
+  },
+  "realistic_exploratory_n_records": 2608,
+  "realistic_exploratory_n_bh_significant": 43,
+  "realistic_confirmatory_candidates": [],
+  "realistic_confirmatory_n_significant": 0,
+  "positive_control_exploratory_n_records": 416,
+  "positive_control_exploratory_n_bh_significant": 411,
+  "positive_control_confirmatory": [
+    {
+      "signal": "momentum",
+      "own_horizon": "1H",
+      "fwd_horizon": "1H",
+      "n_periods": 2000,
+      "mean_ic": 0.9698075187969925,
+      "std_ic": 0.01850048590191927,
+      "permutation_p": 0.0,
+      "stride": 1,
+      "bh_significant_confirmatory": true
+    },
+    {
+      "signal": "relative_strength",
+      "own_horizon": "1H",
+      "fwd_horizon": "1H",
+      "n_periods": 2000,
+      "mean_ic": 0.9698075187969925,
+      "std_ic": 0.01850048590191927,
+      "permutation_p": 0.0,
+      "stride": 1,
+      "bh_significant_confirmatory": true
+    },
+    {
+      "signal": "momentum",
+      "own_horizon": "4H",
+      "fwd_horizon": "4H",
+      "n_periods": 500,
+      "mean_ic": 0.9676496240601503,
+      "std_ic": 0.019282097986948125,
+      "permutation_p": 0.0,
+      "stride": 4,
+      "bh_significant_confirmatory": true
+    },
+    {
+      "signal": "relative_strength",
+      "own_horizon": "4H",
+      "fwd_horizon": "4H",
+      "n_periods": 500,
+      "mean_ic": 0.9676496240601503,
+      "std_ic": 0.019282097986948125,
+      "permutation_p": 0.0,
+      "stride": 4,
+      "bh_significant_confirmatory": true
+    },
+    {
+      "signal": "cross_sectional_relative_strength",
+      "own_horizon": "1H",
+      "fwd_horizon": "1H",
+      "n_periods": 2000,
+      "mean_ic": 0.9698075187969925,
+      "std_ic": 0.01850048590191927,
+      "permutation_p": 0.0,
+      "stride": 1,
+      "bh_significant_confirmatory": true
+    },
+    {
+      "signal": "cross_sectional_relative_strength",
+      "own_horizon": "4H",
+      "fwd_horizon": "1H",
+      "n_periods": 2000,
+      "mean_ic": 0.969030200501253,
+      "std_ic": 0.01883417176326613,
+      "permutation_p": 0.0,
+      "stride": 1,
+      "bh_significant_confirmatory": true
+    },
+    {
+      "signal": "relative_strength",
+      "own_horizon": "4H",
+      "fwd_horizon": "1H",
+      "n_periods": 2000,
+      "mean_ic": 0.969030200501253,
+      "std_ic": 0.01883417176326613,
+      "permutation_p": 0.0,
+      "stride": 1,
+      "bh_significant_confirmatory": true
+    },
+    {
+      "signal": "momentum",
+      "own_horizon": "4H",
+      "fwd_horizon": "1H",
+      "n_periods": 2000,
+      "mean_ic": 0.969030200501253,
+      "std_ic": 0.01883417176326613,
+      "permutation_p": 0.0,
+      "stride": 1,
+      "bh_significant_confirmatory": true
+    },
+    {
+      "signal": "momentum",
+      "own_horizon": "1H",
+      "fwd_horizon": "4H",
+      "n_periods": 500,
+      "mean_ic": 0.9695563909774435,
+      "std_ic": 0.017537209035420897,
+      "permutation_p": 0.0,
+      "stride": 4,
+      "bh_significant_confirmatory": true
+    },
+    {
+      "signal": "relative_strength",
+      "own_horizon": "1H",
+      "fwd_horizon": "4H",
+      "n_periods": 500,
+      "mean_ic": 0.9695563909774435,
+      "std_ic": 0.017537209035420897,
+      "permutation_p": 0.0,
+      "stride": 4,
+      "bh_significant_confirmatory": true
+    }
+  ],
+  "null_exploratory_n_records": 416,
+  "null_exploratory_n_bh_significant": 15,
+  "null_confirmatory": [],
+  "total_experiments_recorded": 3450,
+  "frozen_test_results": []
+}

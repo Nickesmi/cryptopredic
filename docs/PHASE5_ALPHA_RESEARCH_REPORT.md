@@ -24,6 +24,13 @@ find one when it does not, and — on the "realistic" universe built to resemble
 of a real market — whether anything survives out-of-sample, cost-aware, multiple-testing-corrected
 scrutiny.
 
+**Result, in one line (Section 18 has the full answer):** 3,450 experiments recorded; the pipeline
+correctly detects a planted signal (mean IC ≈0.97, 10/10 confirmatory-significant) and correctly
+finds nothing in pure noise (0/416 null cells confirmed); on the realistic universe, **zero**
+candidates produced even exploratory evidence at any horizon short enough to confirm, so **zero**
+reached confirmatory testing, the frozen test, or an economic backtest. **Final classification:
+FAILED.**
+
 ---
 
 ## 1. Frozen Baseline
@@ -245,19 +252,119 @@ end-to-end and not a separate, simpler procedure.
 
 ---
 
-<!-- SECTION_8_EXPLORATORY_RESULTS -->
+## 8. Exploratory Screen Results (Stage 1)
 
-<!-- SECTION_9_CONFIRMATORY_AND_FROZEN_TEST -->
+`scripts/run_phase5_alpha_research.py` ran to completion in 1,749.9s and recorded **3,450 total
+experiments** to `data/research/phase5_experiment_ledger.jsonl`. The realistic-universe exploratory
+screen alone produced **2,608 records** (146 signal×own-horizon combinations × up to 8 forward
+horizons × up to 2 methods × 2 regions).
 
-<!-- SECTION_10_ECONOMIC_BACKTEST -->
+| Universe | Exploratory cells | BH-significant (α=0.05, within-family) |
+|---|---:|---:|
+| Realistic | 2,608 | **43 (1.6%)** |
+| Positive control | 416 | **411 (98.8%)** |
+| Null | 416 | 15 (3.6%) |
 
-<!-- SECTION_11_MFE_MAE_AND_STABILITY -->
+Two things stand out immediately, before any confirmatory testing:
 
-<!-- SECTION_12_ABLATION -->
+**Where the realistic universe's 43 "hits" live.** Every single one is at a forward horizon of 7D,
+14D, or 30D (20 at own+fwd=30D/30D, 9 more at other 14D/30D pairings, 6 at 7D) — **zero** of the 43
+occur at 1H/4H/12H/1D/3D, the horizons short enough that the 24-candle exploratory stride does not
+produce severe window overlap. The single largest hit, `price_volume_confirmation` at 30D/30D
+(Pearson IC -0.186, analytic p≈1.5e-32, n=113 overlapping snapshots), is a textbook symptom of the
+Section 5 caveat: at a 720-candle lookback and a 720-candle forward window advanced only 24 candles
+per snapshot, consecutive "independent" observations share >96% of their underlying candles.
 
-<!-- SECTION_13_ROBUSTNESS -->
+**The same pattern appears in the null universe** (6 of 15 significant cells at region=validation,
+100% of those at 7D/14D — see `data/research/null_exploratory.csv`), and, in reverse, **in the
+positive control**: of the positive control's only 5 non-significant cells (out of 416), all 5 are
+at own=fwd=30D — the same starved-sample cell that inflates false "significance" elsewhere makes a
+*real, enormous* effect (mean IC ≈0.97 everywhere else) occasionally fail to clear the p<0.05 bar
+here, purely from estimation variance at n=83-113. The same cell is unreliable in both directions,
+in all three universes — strong, self-consistent evidence that the exploratory screen's stated
+anti-conservativeness at long horizons is real and is exactly where it was predicted to bite.
 
-<!-- SECTION_14_CONTROLS -->
+A further disclosed artifact, visible in the raw ledger: `short_term_reversal` and
+`medium_term_reversal` are both implemented as `-momentum(lookback)` (Section 2 of `signals.py`);
+swept at the *same* own-lookback as `momentum` itself, they are mathematically its negation, not
+independent signals at that specific cell of the sweep — their appearance among the "significant"
+cells (e.g. at own=30D) is the same underlying momentum-family result counted under three names, not
+three corroborating discoveries. `relative_strength` and `cross_sectional_relative_strength` also
+converge numerically with raw `momentum` at the 30D lookback in both the realistic and null
+universes (identical mean IC to 6 decimal places) — at that timescale, idiosyncratic dispersion is
+small relative to shared market-wide moves, so subtracting a benchmark or universe-mean return barely
+changes the cross-sectional rank order. Both artifacts are disclosed here rather than left to look
+like five independent corroborating hits.
+
+**No signal shows exploratory evidence at any horizon the confirmatory stage could actually test**
+(Section 9) in the realistic universe.
+
+---
+
+## 9. Confirmatory Stage (Stage 2) and Frozen Test
+
+Confirmatory re-testing rebuilds each Stage-1 survivor's panel at a **non-overlapping** stride
+(stride = the candidate's own forward horizon) restricted to the validation region alone (2,000
+candles). This mechanically requires `n_periods = 2000 / stride ≥ 20` to even attempt a permutation
+test — which immediately exposes a structural power limit disclosed here plainly: **a forward
+horizon of 7D (stride 168) or longer cannot reach 20 non-overlapping validation-region
+observations at all** (2000/168 ≈ 11 for 7D; 2000/336 ≈ 5 for 14D; 2000/720 ≈ 2 for 30D). Since
+every one of the realistic universe's 43 Stage-1 hits sits at 7D/14D/30D (Section 8), **all 43 are
+structurally unconfirmable with this study's validation-region length** — not "tested and failed",
+but "the only stage-1 evidence that existed was at horizons long enough that no legitimate
+non-overlapping confirmatory test of it was possible with 8,000 total candles." This is reported as
+a power limitation of the experiment (see Section 18's data requirements), not papered over: **0
+realistic-universe candidates were tested in Stage 2, and consequently 0 were BH-significant, and 0
+frozen-test evaluations were run** — the frozen test region was **never touched** in this run,
+exactly as the "at most once, and only for a confirmed survivor" rule requires.
+
+**Positive control — mechanism validation (mandatory, Section 14):** all 10 Stage-1 survivors that
+did reach a testable horizon (1H and 4H own/forward pairings, n=500-2,000 non-overlapping periods)
+were re-confirmed: mean IC 0.968-0.970, permutation p-value **0.000** (0 of 300 shuffles matched or
+exceeded the observed mean IC), **10/10 BH-significant** after correction. This is the pipeline
+working exactly as required: an unambiguous, non-overlapping-tested, permutation-significant signal
+is found when one is deliberately planted.
+
+**Null — specificity validation (mandatory, Section 14):** 0 null-universe cells reached the
+validation-region + n≥20 + BH-significant bar required to even enter Stage 2 — the null control
+produced **zero** confirmatory-stage false positives, consistent with a correctly calibrated
+procedure (its 6 validation-region Stage-1 "hits", like the realistic universe's, were entirely
+concentrated at the unconfirmable 7D/14D horizons — see Section 8).
+
+---
+
+## 10-13. Economic Backtest, MFE/MAE, Ablation, and Robustness — Not Run, By Design
+
+Sections 9-13 of the audit brief request these analyses **"for promising signals"**, and Section
+17's acceptance ladder makes statistically significant, confirmatory-stage IC a *prerequisite* for
+even reaching the PROMISING tier, let alone the tier where economic backtesting matters. Section 18
+is explicit: **"If the answer is FAILED or WEAK, do NOT invent additional features simply to
+continue development."** Zero candidates survived Stage 2 on the realistic universe (Section 9).
+Running a transaction-cost-aware backtest, an MFE/MAE report, an ablation study, or a perturbation
+sweep on a candidate that already failed the IC significance test it needed to pass first would not
+be rigor — it would be exactly the kind of "keep trying things until something looks good" the
+brief repeatedly prohibits. `src/research/economic_simulation.py`, `ablation.py`, and the
+`parameter_sensitivity_sweep`/`cost_sensitivity_sweep` machinery all exist, are unit-tested, and are
+ready to run **the moment Stage 2 produces a confirmed survivor** — in this run, on this data, it did
+not, so they were not invoked on a non-survivor merely to fill in a report section.
+
+---
+
+## 14. Positive-Control and Null-Control Validation (Mandatory)
+
+Both mandatory controls (Section 9's confirmatory results, repeated here for the record required by
+Section 14):
+
+| Control | Requirement | Result |
+|---|---|---|
+| Positive control | Planted alpha must be detected | **Detected**: mean IC 0.968-0.970 across all 10 testable (own,forward)-horizon pairs, permutation p=0.000 (0/300 shuffles matched or exceeded it), 10/10 BH-significant after correction, at both 1H and 4H horizons. |
+| Null control | Pure noise must not produce significant alpha after multiple-testing correction | **Not produced**: 0 of the null universe's cells reached the validation-region + n≥20 + BH-significant bar needed to even enter confirmatory testing; the 6 Stage-1 "hits" it did show were, like the realistic universe's, entirely artifacts of the unconfirmable long-horizon overlapping-window cells (Section 8), not real alpha. |
+
+Both mandatory conditions are satisfied: **the pipeline can find a real, strong signal when one
+exists, and does not manufacture a false one out of pure noise after correction.** This validates
+the Alpha Research Engine's mechanism itself — the realistic-universe FAILED result (Section 9, 18)
+is therefore attributable to the absence of a confirmable signal in that universe's data, not to a
+broken or miscalibrated testing pipeline.
 
 ---
 
@@ -271,7 +378,16 @@ mean/median/std IC, information ratio, hit rate, quintile monotonicity (computed
 own natural horizon), permutation p-value and BH-significance flag where Stage 2 was run, and free-
 text notes carrying the Stage-1 analytic p-value.
 
-<!-- SECTION_15_LEDGER_COUNTS -->
+**3,450 total experiment records** across 3 universes: 2,608 (realistic exploratory) + 416
+(positive-control exploratory) + 416 (null exploratory) + 10 (positive-control confirmatory) = 3,450.
+0 realistic-universe and 0 null-universe candidates reached the confirmatory stage; both counts are
+recorded in the ledger as zero, not omitted. Every exploratory cell — including all 2,565
+non-significant realistic-universe cells — is a row in
+`data/research/phase5_experiment_ledger.jsonl`, addressable by
+`(universe, family, signal_name, own-horizon, forward-horizon, method, region)`, so a future phase
+that wants to test, say, "momentum at 1D predicting 3D forward returns on the realistic universe"
+can look up this exact result (mean IC, n, analytic p, BH-significance) before spending compute
+re-deriving it.
 
 This ledger is the record required so that "future phases cannot accidentally treat a discovered
 pattern as out-of-sample evidence after it has already been mined": any future extension of this
@@ -316,7 +432,77 @@ automatically.
 | SHADOW READY | PROMISING, plus frozen-test confirmation (Section 9), full provenance, no known leakage, stable under perturbation, realistic transaction costs. |
 | PAPER READY | Only after shadow validation on genuinely new data without material degradation — **not achievable from a backtest alone**, and therefore not assignable in this report regardless of frozen-test results. |
 
-<!-- SECTION_18_FINAL_DECISION -->
+---
+
+## 18. Final Decision
+
+> **Is there a statistically defensible crypto alpha signal in the currently available data that
+> materially improves asset selection beyond random selection and simple baselines after costs?**
+
+# **FAILED**
+
+No candidate — across 19 signal specs, 8 own-lookback horizons, 8 forward-return horizons, 3
+universes, 2 IC methods, 2 testing stages, and 3,450 recorded experiments — reached the
+confirmatory, non-overlapping-stride, permutation-tested, multiple-testing-corrected bar on the
+realistic universe. The result is not "borderline" or "mixed": at every forward horizon short
+enough to test without the overlapping-window artifact documented in Sections 5, 8, and 9 (1H
+through 3D), the realistic universe showed **zero** exploratory-stage evidence for **any** of the
+momentum, mean-reversion, volume/flow, volatility, relative-strength, or cross-sectional signal
+families. The only cells that ever looked significant lived exclusively at horizons (7D/14D/30D)
+where this study's 8,000-candle sample cannot even construct a non-overlapping confirmatory test —
+and the identical pattern of spurious "significance" at exactly that cell, in *both directions*,
+appeared in the null universe (false positives) and the positive control (occasional false
+negatives on a real, huge effect), which is the clearest possible demonstration that those specific
+cells' apparent results are sampling artifacts of the exploratory stride, not evidence about markets.
+
+This is not a verdict on the Alpha Research Engine itself: the mandatory controls (Section 14) show
+the pipeline correctly detects an unambiguous planted signal (mean IC ≈0.97, permutation p=0.000,
+10/10 significant) and correctly finds nothing in pure noise after correction (0/416 null cells
+reached confirmatory testing). The pipeline works. It found nothing to confirm in the "realistic"
+synthetic data because — by construction, and this is the honest caveat that must travel with a
+FAILED verdict on synthetic data — that universe's weak AR(1) autocorrelation (|phi| ≤ 0.07) may
+itself simply be too faint, or differently shaped, than whatever autocorrelation (if any) exists in
+real crypto markets. **FAILED here means "this pipeline, run on this repository's best disclosed
+synthetic approximation of a real market, found no confirmable signal" — it is evidence about the
+method and about this synthetic universe, not a proof that no signal exists in real crypto data.**
+
+**1. What was tested.** All of Section 5's 146 (signal, own-horizon) combinations × 8 forward
+horizons × up to 2 IC methods, on 3 disclosed-synthetic universes, across 2 testing stages, with
+Benjamini-Hochberg correction applied within each tested family — 3,450 recorded experiments, every
+one written to the ledger regardless of outcome.
+
+**2. What failed.** Every realistic-universe candidate failed to produce Stage-1 (exploratory)
+evidence at any horizon short enough for Stage 2 (confirmatory, non-overlapping,
+permutation-tested) to even attempt verification. No candidate reached Stage 2. No candidate
+reached the frozen test. No candidate reached an economic backtest.
+
+**3. What evidence is missing.** Real historical OHLCV data for the assets this system actually
+trades. Everything in this report is necessarily computed on disclosed synthetic data (Section 4/6)
+because this sandbox has no outbound network access to any real market-data source and no local
+historical file exists in the repository — a limitation carried unchanged from Phases 2-4. A
+FAILED verdict on synthetic data is evidence the *method* is sound (Section 14) and that *this
+particular synthetic approximation* of a real market contains no confirmable signal at the tested
+horizons; it is explicitly **not** evidence that real crypto markets contain no such signal. Also
+missing: a real historical asset-listing/delisting registry (Section 4) and a real historical
+market-cap series (Section 6, baseline #3) — neither obtainable without external data access.
+
+**4. What data would be required to continue.** (a) Real historical OHLCV for a broad, liquid
+crypto universe, at 1-hour or finer resolution, spanning multiple regimes (at least one full
+bull/bear cycle, ideally 3+ years) — needed to re-run this exact pipeline (Sections 2, 5, 7-9)
+against markets instead of a synthetic approximation. (b) A real historical listing/delisting log,
+to replace the partial (listing-only) survivorship fix in Section 4 with a genuine survivorship-free
+universe. (c) A real historical market-cap/circulating-supply series, to add baseline #3 (Section
+6). (d) Ideally, a validation region long enough that 7D-30D horizons can also be confirmed
+non-overlapping (Section 9's power limitation) — a longer real history would resolve this
+automatically; on synthetic data it would require deliberately generating a longer sample.
+
+**5. Should the project remain research-only?** **Yes.** Nothing in this report, or in Phases 3-4,
+supports moving any signal — forecaster, scanner, or any Phase 5 candidate — beyond
+`src/research/` and `src/ranking/`'s existing frozen, unpromoted state. The Alpha Research Engine
+should remain exactly what Section 16 declares it: a research component that a human explicitly
+promotes from, never a component anything in `src/api/` calls automatically. The correct next step
+is not more synthetic experimentation on this codebase — the pipeline's mechanism is already proven
+sound via the controls — but real historical data, per item 4 above.
 
 ---
 
