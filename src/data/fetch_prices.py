@@ -156,6 +156,53 @@ class CoinGeckoPriceRepository(PriceRepository):
         )
         return df
 
+    def fetch_with_market_cap(self, symbol: str, days: int) -> pd.DataFrame:
+        """Like :meth:`fetch`, plus a ``market_cap`` column.
+
+        The ``/market_chart`` endpoint this class already calls returns a
+        third series, ``market_caps``, alongside ``prices`` and
+        ``total_volumes`` — Phase 6's data-availability audit found this
+        was being fetched and silently discarded, which mattered because
+        Phase 5/6's baseline #3 ("market-cap-weighted universe") had been
+        marked "not available" for lack of a market-cap source when one
+        was already one field away. This is a second, separate call (not
+        reused from :meth:`fetch`) so existing callers of ``fetch`` keep
+        their exact current behaviour and cost (one call, no market cap)
+        unchanged.
+        """
+        logger.info("Fetching %d days of price+market-cap data for '%s'", days, symbol)
+
+        url = self._base_url + self._MARKET_CHART_ENDPOINT.format(coin_id=symbol)
+        params = {"vs_currency": "usd", "days": str(days), "interval": "daily"}
+        raw = self._get_with_retry(url, params)
+
+        prices = raw.get("prices", [])
+        volumes = raw.get("total_volumes", [])
+        market_caps = raw.get("market_caps", [])
+
+        if not prices:
+            raise ValueError(f"No price data returned by CoinGecko for '{symbol}'.")
+
+        close_df = self._to_series(prices, "close")
+        df = close_df.to_frame()
+
+        if volumes:
+            df = df.join(self._to_series(volumes, "volume").to_frame(), how="left")
+            df["volume"] = df["volume"].fillna(0.0)
+        else:
+            df["volume"] = 0.0
+
+        if market_caps:
+            df = df.join(self._to_series(market_caps, "market_cap").to_frame(), how="left")
+        else:
+            df["market_cap"] = float("nan")
+
+        df["open"] = df["close"]
+        df["high"] = df["close"]
+        df["low"] = df["close"]
+
+        return df[["open", "high", "low", "close", "volume", "market_cap"]]
+
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------

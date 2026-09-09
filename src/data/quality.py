@@ -69,6 +69,7 @@ def validate_ohlcv(
     max_stale_candles: float = 2.0,
     max_missing_fraction: float = 0.05,
     volume_zscore_threshold: float = 8.0,
+    is_closed: pd.Series | None = None,
 ) -> DataQualityReport:
     """Run all data-quality checks against an OHLCV frame.
 
@@ -88,6 +89,21 @@ def validate_ohlcv(
                        a large fraction means the series can't be trusted).
         volume_zscore_threshold: Volume z-score beyond which a candle is
                        flagged as an abnormal-volume warning.
+        is_closed:     Optional boolean Series aligned to ``df.index``
+                       (e.g. carried over from ``CandleBar.is_closed``
+                       before it was dropped by converting to a plain
+                       OHLCV frame). ``src/utils/candles.py::bars_to_frame``
+                       already drops a trailing unclosed candle at the
+                       point live/backtest data is first assembled — this
+                       is a *second*, independent gate for any caller that
+                       builds an OHLCV frame by another path (e.g. a
+                       concatenation of two fetched batches, or a frame
+                       reloaded from a provenance-tracked CSV that kept
+                       its own closure metadata) and therefore isn't
+                       covered by that single enforcement point. Any
+                       ``False`` entry — not just a trailing one — is
+                       critical: an unclosed candle anywhere in a frame
+                       used for research or a prediction anchor is unsafe.
 
     Returns:
         A :class:`DataQualityReport`. Does not raise — use
@@ -202,6 +218,29 @@ def validate_ohlcv(
             )
         )
 
+    # --- unclosed candles ------------------------------------------------------
+    if is_closed is not None:
+        aligned = is_closed.reindex(df.index)
+        if aligned.isna().any():
+            issues.append(
+                DataQualityIssue(
+                    "critical",
+                    "is_closed_alignment_mismatch",
+                    "is_closed series does not cover every row in the OHLCV frame's index.",
+                )
+            )
+        else:
+            n_unclosed = int((~aligned.astype(bool)).sum())
+            if n_unclosed:
+                issues.append(
+                    DataQualityIssue(
+                        "critical",
+                        "unclosed_candle",
+                        f"{n_unclosed} candle(s) are not yet closed (is_closed=False) — "
+                        "an in-progress candle must never be used for research or as a prediction anchor.",
+                    )
+                )
+
     # --- abnormal volume (warning only -- unusual volume can be legitimate) --
     if len(df) >= 20:
         vol = df["volume"].astype(float)
@@ -222,7 +261,7 @@ def validate_ohlcv(
     return DataQualityReport(issues)
 
 
-def enforce_quality_gate(df: pd.DataFrame, timeframe: str, **kwargs) -> DataQualityReport:
+def enforce_quality_gate(df: pd.DataFrame, timeframe: str, **kwargs: object) -> DataQualityReport:
     """Run :func:`validate_ohlcv` and raise :class:`DataQualityError` on any
     critical issue. Warnings are returned, not raised, so callers can log
     them without blocking a prediction over e.g. a single unusual-volume

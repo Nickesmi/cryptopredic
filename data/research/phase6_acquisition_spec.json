@@ -1,0 +1,24 @@
+{
+  "name": "phase6_binance_hourly_universe",
+  "exchange_or_source": "Binance",
+  "endpoint": "/api/v3/klines",
+  "method": "GET",
+  "symbols": [
+    "BTCUSDT",
+    "ETHUSDT",
+    "SOLUSDT",
+    "BNBUSDT",
+    "XRPUSDT",
+    "ADAUSDT",
+    "DOGEUSDT",
+    "AVAXUSDT"
+  ],
+  "timeframe": "1H",
+  "start": "2021-01-01T00:00:00Z",
+  "end": "2024-01-01T00:00:00Z",
+  "pagination_rule": "startTime begins at range start; after each <=1000-row page, startTime = last_returned_candle.open_time + 1ms; stop when a page returns fewer than 1000 rows or startTime > end.",
+  "rate_limit_note": "0.25s delay between pages per symbol; unauthenticated public REST endpoint.",
+  "timezone": "UTC",
+  "timestamp_convention": "candle open time, left-labeled",
+  "expected_row_count_per_symbol": 26280
+}

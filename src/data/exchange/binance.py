@@ -178,6 +178,104 @@ class BinanceAdapter(IExchangeAdapter):
         )
         return candles
 
+    async def get_historical_klines(
+        self,
+        symbol: str,
+        timeframe: str,
+        start_ms: int,
+        end_ms: int,
+        page_limit: int = 1000,
+        request_delay_seconds: float = 0.25,
+    ) -> list[CandleBar]:
+        """Fetch a full historical range of klines, paginating past the 1000-per-call cap.
+
+        ``get_candles`` above only returns the most recent *limit* (<=1000)
+        candles — it cannot retrieve, say, three years of hourly history
+        (>26,000 candles). This is the real capability gap Phase 6's data-
+        availability audit found: nothing in this codebase could build a
+        multi-year OHLCV dataset even with network access. This method
+        closes it by repeatedly calling ``GET /api/v3/klines`` with
+        ``startTime``/``endTime``, advancing ``startTime`` to one
+        millisecond past the last returned candle's *open* time each round
+        (Binance's ``startTime`` is inclusive), until the page's last candle
+        reaches *end_ms* or a page returns fewer than *page_limit* rows
+        (meaning history is exhausted).
+
+        Args:
+            symbol:      Binance symbol (e.g. ``"BTCUSDT"``).
+            timeframe:   Canonical timeframe string.
+            start_ms:    Range start, inclusive, Unix ms (UTC).
+            end_ms:      Range end, inclusive, Unix ms (UTC).
+            page_limit:  Candles per request (<=1000, Binance's own cap).
+            request_delay_seconds: Delay between pages, a conservative
+                         default to stay well under Binance's public rate
+                         limit for an unauthenticated, multi-page pull.
+
+        Returns:
+            All :class:`CandleBar` in ``[start_ms, end_ms]``, ascending,
+            de-duplicated at page boundaries.
+
+        Raises:
+            ValueError: If *timeframe* is unsupported or the range is empty/inverted.
+            aiohttp.ClientError: On network or HTTP errors.
+        """
+        interval = _TF_MAP.get(timeframe)
+        if interval is None:
+            raise ValueError(
+                f"Unsupported timeframe '{timeframe}'. Supported: {list(_TF_MAP.keys())}"
+            )
+        if end_ms <= start_ms:
+            raise ValueError(f"end_ms ({end_ms}) must be greater than start_ms ({start_ms}).")
+        page_limit = min(page_limit, 1000)
+
+        url = f"{_REST_BASE}/api/v3/klines"
+        session = await self._get_session()
+        all_bars: list[CandleBar] = []
+        cursor_ms = start_ms
+        seen_open_times: set[int] = set()
+
+        while cursor_ms <= end_ms:
+            params = {
+                "symbol": symbol.upper(),
+                "interval": interval,
+                "startTime": cursor_ms,
+                "endTime": end_ms,
+                "limit": page_limit,
+            }
+            async with session.get(url, params=params) as resp:
+                resp.raise_for_status()
+                page = await resp.json()
+
+            if not page:
+                break
+
+            for raw in page:
+                open_time_ms = int(raw[0])
+                if open_time_ms in seen_open_times:
+                    continue  # boundary candle repeated from the previous page's startTime
+                seen_open_times.add(open_time_ms)
+                # is_closed is judged against real wall-clock time, not the
+                # query's end_ms boundary -- correct both for a purely
+                # historical range (end_ms far in the past, all closed) and
+                # a range whose end_ms is "now" (the trailing candle may
+                # genuinely still be forming).
+                all_bars.append(_parse_kline(raw))
+
+            last_open_time_ms = int(page[-1][0])
+            cursor_ms = last_open_time_ms + 1
+            logger.info(
+                "Fetched page of %d %s candles for %s (cursor now %d, %d total)",
+                len(page), timeframe, symbol, cursor_ms, len(all_bars),
+            )
+
+            if len(page) < page_limit:
+                break  # short page: exchange has no more data before endTime
+            if request_delay_seconds > 0:
+                await asyncio.sleep(request_delay_seconds)
+
+        all_bars.sort(key=lambda b: b.time)
+        return all_bars
+
     async def stream_candles(
         self,
         symbol: str,
