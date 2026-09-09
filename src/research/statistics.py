@@ -185,5 +185,5 @@ def benjamini_hochberg(p_values: Sequence[float], alpha: float = 0.05) -> list[b
     if not below.any():
         return [False] * m
     max_k = np.max(np.where(below)[0])  # 0-indexed largest k satisfying the criterion
-    cutoff_p = sorted_p[max_k]
-    return [p <= cutoff_p for p in p_values]
+    cutoff_p = float(sorted_p[max_k])
+    return [bool(p <= cutoff_p) for p in p_values]
